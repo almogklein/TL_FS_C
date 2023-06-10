@@ -6,12 +6,12 @@
 # @File    : ast_models.py
 
 import torch
-import numpy as np
-import os, wget, csv
+import os, wget
+import torch, timm
 import torch.nn as nn
-import torch, torchaudio, timm
 from torch.cuda.amp import autocast
 from timm.models.layers import to_2tuple, trunc_normal_
+
 
 # override the timm package to relax the input shape constraint.
 class PatchEmbed(nn.Module):
@@ -33,6 +33,24 @@ class PatchEmbed(nn.Module):
         
         return x
 
+class ContrastiveLoss(nn.Module):
+
+    def __init__(self, margin=1.0):
+        super(ContrastiveLoss, self).__init__()
+        self.margin = margin
+
+    def forward(self, input1, input2, y):
+        
+        diff = input1 - input2
+        dist_sq = torch.sum(torch.pow(diff, 2), 1)
+        dist = torch.sqrt(dist_sq)
+        mdist = self.margin - dist
+        dist = torch.clamp(mdist, min=0.0)
+        loss = y * dist_sq + (1 - y) * torch.pow(dist, 2)
+        loss = torch.sum(loss) / 2.0 / input1.size()[0]
+        
+        return loss
+
 class ASTModel(nn.Module):
     """
     The AST model.
@@ -45,8 +63,8 @@ class ASTModel(nn.Module):
     :param audioset_pretrain: if use full AudioSet and ImageNet pretrained model
     :param model_size: the model size of AST, should be in [tiny224, small224, base224, base384], base224 and base 384 are same model, but are trained differently during ImageNet pretraining.
     """
-    def __init__(self, label_dim=50, fstride=10, tstride=10, input_fdim=128, input_tdim=1024, 
-                 imagenet_pretrain=True, audioset_pretrain=True, model_path='/home/almogk/FSL_TL_E_C/pretraind_models/audioset_10_10_0.4593.pth', verbose=True):
+    def __init__(self, label_dim=35, fstride=10, tstride=10, input_fdim=128, input_tdim=512, 
+                 imagenet_pretrain=False, audioset_pretrain=False, model_path='/home/almogk/FSL_TL_E_C/pretraind_models/audioset_10_10_0.4593.pth', verbose=True):
 
         super(ASTModel, self).__init__()
         assert timm.__version__ == '0.4.5', 'Please use timm == 0.4.5, the code might not be compatible with newer versions.'
@@ -54,6 +72,7 @@ class ASTModel(nn.Module):
         if verbose == True:
             print('---------------AST Model Summary---------------')
             print('ImageNet pretraining: {:s}, AudioSet pretraining: {:s}'.format(str(imagenet_pretrain),str(audioset_pretrain)))
+        
         # override timm input shape restriction
         timm.models.vision_transformer.PatchEmbed = PatchEmbed
 
@@ -108,18 +127,22 @@ class ASTModel(nn.Module):
                 print('------------------### imagenet pretrained positional embedding is used###------------------.')
             else:
                 
-                # if not use imagenet pretrained model, just randomly initialize a learnable positional embedding
+                # initialize all weight parameters
+                for m in self.modules():
+                    if isinstance(m, nn.Linear):
+                        nn.init.xavier_uniform_(m.weight)
+                        if m.bias is not None:
+                            nn.init.constant_(m.bias, 0)
+                    elif isinstance(m, nn.LayerNorm):
+                        nn.init.constant_(m.bias, 0)
+                        nn.init.constant_(m.weight, 1)
+                        
+                # if not use imagenet pretrained model, just randomly initialize a learnable embeddings
                 new_pos_embed = nn.Parameter(torch.zeros(1, self.v.patch_embed.num_patches + 2, self.original_embedding_dim))
                 self.v.pos_embed = new_pos_embed
-                trunc_normal_(self.v.pos_embed, std=.02)
-                
-                # implement the sinusoidal positional embedding calculation
-                # sinusoidal_pos_embed = torch.zeros(1, self.v.patch_embed.num_patches + 2, self.original_embedding_dim)
-                # for i in range(self.original_embedding_dim):
-                #     for j in range(self.v.patch_embed.num_patches + 2):
-                #         sinusoidal_pos_embed[0][j][i] = torch.sin(torch.tensor(j / 10000**(2 * i / self.original_embedding_dim)))
-                # self.v.pos_embed = nn.Parameter(sinusoidal_pos_embed)
-                print('------------------### randomly initialize positional embedding is used###------------------.')
+                trunc_normal_(self.v.pos_embed, mean=0, std=0.5)
+                if verbose == True:
+                    print('------------------### randomly initialize positional embedding is used###------------------.')
                 
         # now load a model that is pretrained on both ImageNet and AudioSet
         elif audioset_pretrain == True:
@@ -197,38 +220,70 @@ class ASTModel(nn.Module):
         
         for blk in self.v.blocks:
             x = blk(x)
-        
+            
         x = self.v.norm(x)
         x = (x[:, 0] + x[:, 1]) / 2
 
-        vec_emmbeding = x.detach().clone()
+        vec_emmbeding_norm = x.detach().clone()
         
         x = self.mlp_head(x)
         
-        return x, vec_emmbeding
-    
+        return x, vec_emmbeding_norm
 
-# Create a new class that inherits the original ASTModel class
-class ASTModelVis(ASTModel):
-    '''ASTModel with visualization support'''
+class Siamese_ASTModel(nn.Module):
+    """
+    SiameseASTModel extends the ASTModel class to implement a Siamese architecture
+    for embedding pairs of spectrograms.
+    """
+    def __init__(self, input_tdim, con_los,  fc, fin, imagenet_pretrain, audioset_pretrain, checkpoint_path=None):
+        super(Siamese_ASTModel, self).__init__()
+        
+        self.fc = fc
+        self.con_los = con_los
+        if checkpoint_path != None:
+            ast_mdl = ASTModel(label_dim=35, input_tdim=input_tdim, imagenet_pretrain=False, audioset_pretrain=False)
+            print(f'[*INFO] load {fin} checkpoint: {checkpoint_path}')
+            checkpoint = torch.load(checkpoint_path, map_location='cuda:0')
+            
+            ast_model = torch.nn.DataParallel(ast_mdl, device_ids=[0])
+            ast_model.load_state_dict(checkpoint)
+            ast_model = ast_model.to(torch.device("cuda:0"))
+            self.v = ast_model.module.v
+            # self.ast = ast_model.to(torch.device("cuda:0"))
+            
+        else:
+            ast_mdl = ASTModel(label_dim=35, input_tdim=input_tdim, imagenet_pretrain=imagenet_pretrain, audioset_pretrain=audioset_pretrain)
+            print(f'[*INFO] load {fin}  no checkpoint')
+            ast_model = torch.nn.DataParallel(ast_mdl, device_ids=[0])
+            ast_model = ast_model.to(torch.device("cuda:0"))
+            self.v = ast_model.module.v
+            # self.ast = ast_model.to(torch.device("cuda:0"))
+            
+            
+        if self.con_los:
+           pass
+        else:    
+            if self.fc == 's':
+                self.fc_s = nn.Linear(1536, 1)
+                # nn.Sequential(
+                #     nn.Linear(1536, 1),
+                #     nn.Sigmoid()
+                # )
+            if self.fc == 'm':
+                # self.fc_m = nn.Sequential(
+                #     nn.Linear(768, 1),
+                #     nn.Sigmoid(dim=1)
+                # )
+                self.fc_m = nn.Linear(768, 1)
+                
+                # self.fc_m = nn.DataParallel(self.fc_m)
+                # self.ast = nn.DataParallel(self.ast)
     
-    def get_att_map(self, block, x):
+    def forward_once(self, x):
         
-        qkv = block.attn.qkv
-        num_heads = block.attn.num_heads
-        scale = block.attn.scale
-        B, N, C = x.shape
+        # ve = self.ast(x)[1]
         
-        qkv = qkv(x).reshape(B, N, 3, num_heads, C // num_heads).permute(2, 0, 3, 1, 4)
-        q, k, v = qkv[0], qkv[1], qkv[2]  # make torchscript happy (cannot use tensor as tuple)
-        
-        attn = (q @ k.transpose(-2, -1)) * scale
-        attn = attn.softmax(dim=-1)
-        
-        return attn
-
-    def forward_visualization(self, x):
-        # expect input x = (batch_size, time_frame_num, frequency_bins), e.g., (12, 1024, 128)
+        # # expect input x = (batch_size, time_frame_num, frequency_bins), e.g., (12, 1024, 128)
         x = x.unsqueeze(1)
         x = x.transpose(2, 3)
 
@@ -242,33 +297,17 @@ class ASTModelVis(ASTModel):
         x = x + self.v.pos_embed
         x = self.v.pos_drop(x)
         
-        # save the attention map of each of 12 Transformer layer
-        att_list = []
         for blk in self.v.blocks:
-            cur_att = self.get_att_map(blk, x)
-            att_list.append(cur_att)
             x = blk(x)
             
         x = self.v.norm(x)
         x = (x[:, 0] + x[:, 1]) / 2
+
+        # vec_emmbeding_norm = x.detach().clone()
         
-        vec_emmbeding = x.detach().clone()
-
-        x = self.mlp_head(x)
         
-        return att_list, x, vec_emmbeding
-    
-
-class SiameseASTModel(nn.Module):
-    """
-    SiameseASTModel extends the ASTModel class to implement a Siamese architecture
-    for embedding pairs of spectrograms.
-    """
-
-    def __init__(self, *args, **kwargs):
-        super().__init__()
-        self.ast_model = ASTModel(*args, **kwargs)
-
+        return x
+            
     @autocast()
     def forward(self, x1, x2):
         """
@@ -276,7 +315,25 @@ class SiameseASTModel(nn.Module):
         :param x2: the second input spectrogram, expected shape: (batch_size, time_frame_num, frequency_bins), e.g., (12, 1024, 128)
         :return: a tuple containing the embeddings of the two inputs
         """
-        x1_embedding = self.ast_model(x1)[1]
-        x2_embedding = self.ast_model(x2)[1]
+        x1_embedding = self.forward_once(x1)
+        x2_embedding = self.forward_once(x2)
+    
         
-        return x1_embedding, x2_embedding
+        if self.con_los:
+            
+            return x1_embedding, x2_embedding
+        
+        else:    
+            if self.fc == 's':
+                output = torch.cat((x1_embedding, x2_embedding), 1)
+                output = self.fc_s(output)
+            
+            if self.fc == 'm':
+                # Multiply (element-wise) the feature vectors of the two images together, 
+                # to generate a combined feature vector representing the similarity between the two.
+                # combined_features = x1_embedding * x2_embedding
+                combined_features = x1_embedding * x2_embedding
+                # Pass the combined feature vector through classification head to get similarity value in the range of 0 to 1.
+                output = self.fc_m(combined_features)
+            
+            return output

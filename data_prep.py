@@ -1,12 +1,13 @@
+# from os import listdir
+# import itertools
+
 import os
 import wget
 import json
 import random
 import zipfile
-import itertools
 import pandas as pd
 import numpy as np
-from os import listdir
 
 
 def get_data_for_ast_model(data_path, code_path, train_class_names, test_class_names, val_class_names, class_map):
@@ -283,6 +284,7 @@ def create_query_sets(data, ss, query_c_num, query_c_size):
     q_dict = {}
     ss_class_names = support_sets_dic['class_names']
     ss_class_roots = support_sets_dic['class_roots']
+    
     # create the query sets
     for index in range(len(ss_class_names)):
         q_n = random.sample(ss_class_names[index], query_c_num)
@@ -299,4 +301,69 @@ def create_query_sets(data, ss, query_c_num, query_c_size):
                     continue
             q_set.append([c, q]) 
         q_dict[index] = q_set
+    return q_dict
+
+def create_open_set_queries(data, ss, query_c_num, query_c_size, unknown_ratio=0.3):
+    """     
+    Args:
+        data : json file
+        ss : support set PATH
+        query_c_num : int
+        query_c_size : int
+        unknown_ratio: float, ratio of unknown samples in the queries
+    Returns:
+        dict: query set dictionary
+    """
+
+    # load the input JSON file
+    with open(ss, 'r') as f:
+        support_sets_dic = json.load(f)
+
+    # group the data by class labels
+    label_to_wavs = {}
+    for d in data:
+        label = d['labels']
+        wav = d['wav']
+        if label in label_to_wavs:
+            label_to_wavs[label].append(wav)
+        else:
+            label_to_wavs[label] = [wav]
+
+    q_dict = {}
+    ss_class_names = support_sets_dic['class_names']
+    ss_class_roots = support_sets_dic['class_roots']
+
+    # create the query sets
+    for index in range(len(ss_class_names)):
+        q_set = []
+
+        for _ in range(query_c_num):
+            q = []
+            class_wavs = []
+            sample_label = None
+
+            # Determine if the query will be a known sample or an unknown sample
+            if random.random() < unknown_ratio:
+                # Unknown sample
+                sample_label = "unknown"
+                class_wavs = data  # All available samples
+
+            else:
+                # Known sample
+                sample_label = random.choice(ss_class_names[index])
+                class_wavs = label_to_wavs[sample_label]
+
+            while len(q) < query_c_size:
+                sample = random.choice(class_wavs)
+
+                # Check if the sample is already in the support set or previous queries
+                if sample not in ss_class_roots[index] and sample not in q:
+                    q.append(sample)
+                else:
+                    continue
+
+            q_set.append([sample_label, q])
+
+        q_dict[index] = q_set
+
     return q_dict

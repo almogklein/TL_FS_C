@@ -1,15 +1,17 @@
-import json
-import math
+# import math
+# import torch
+# import random
+# import pickle
+# import torch.nn as nn
+
 import os
-from pathlib import Path
-import pickle
-from matplotlib import pyplot as plt
-import numpy as np
-import torch
-import torch.nn as nn
-import random
+import json
+import itertools
 import data_prep
-from collections import Counter, namedtuple
+import numpy as np
+from pathlib import Path
+from matplotlib import pyplot as plt
+from collections import Counter #, namedtuple
 
 class AverageMeter(object):
     """Computes and stores the average and current value"""
@@ -28,6 +30,44 @@ class AverageMeter(object):
         self.count += n
         self.avg = self.sum / self.count
 
+def make_task_sets_from_q(k_way, n_shot, train_support_set_num, query_c_num, query_c_size, CODE_REPO_PATH, test_support_set_num, val_support_set_num):
+    
+    for kway in range(len(k_way)):
+        for nshot in range(len(n_shot)):
+            
+            for i in range(len(train_support_set_num)):
+                for j in range(len(query_c_num)):
+                    for k in range(len(query_c_size)):
+                    
+                        creat_f_s_sets(CODE_REPO_PATH, n_shot[nshot], k_way[kway], query_c_num[j], query_c_size[k], train_support_set_num[i], test_support_set_num[i], val_support_set_num, i)
+                        print(f"finished creating task sets for {n_shot[nshot]} shot {k_way[kway]} way {query_c_num[j]} query classes {query_c_size[k]} query examples per class")
+    
+    print('finished all tasks')
+
+def make_task_sets_from_unknown_q(k_way, n_shot, query_c_num, query_c_size, CODE_REPO_PATH, test_support_set_num):
+    
+    for kway in range(len(k_way)):
+        for nshot in range(len(n_shot)):
+            
+            for i in range(len(test_support_set_num)):
+                for j in range(len(query_c_num)):
+                    for k in range(len(query_c_size)):
+                    
+                        creat_unknown_f_s_sets(CODE_REPO_PATH, n_shot[nshot], k_way[kway], query_c_num[j], query_c_size[k], test_support_set_num[i])
+                        print(f"finished creating known/unknown task sets for {n_shot[nshot]} shot {k_way[kway]} way {query_c_num[j]} query classes {query_c_size[k]} query examples per class")
+    
+    print('finished all tasks')
+
+def load_pt_ft_models_checkpoint_path(model_dir_pattern):
+            
+    models_checkpoint_path = []
+    for j in ["00", "10", "11"]:
+        
+        model_path = model_dir_pattern.format(j, 4)
+        if os.path.exists(model_path):
+            models_checkpoint_path.append(model_path)
+    
+    return models_checkpoint_path
 
 def make_all_pairs(CODE_REPO_PATH, support_set_num, query_c_num, query_c_size, k_way):
     pairs_json_path = [] 
@@ -116,7 +156,32 @@ def create_support_sets_and_q(json_data_path, n_shot, k_way, support_set_num, s,
     
     return support_set_dict, q_dict
 
-def create_task_sets(support_set_dict, q_dict, support_set_num, query_c_num, query_c_size, s, save_path, n_shot):
+def create_unknown_q_sets(json_data_path, n_shot, k_way, support_set_num, s, query_c_num, query_c_size, save_path):
+    
+    # load the input JSON file
+    with open(json_data_path, 'r') as f:
+        input_dict = json.load(f)
+    
+    # extract the data array from the input dictionary
+    data = input_dict['data']
+    
+    SAVE_PATH = save_path + f'/{s}/{support_set_num}'
+    if os.path.exists(SAVE_PATH) == False:
+        os.mkdir(SAVE_PATH)
+        
+    # write the output JSON file
+    with open(SAVE_PATH + f'/{support_set_num}_{s}_suppotr_sets.json', 'r') as f:
+        support_set_dict = json.load(f)
+    
+    q_dict = data_prep.create_open_set_queries(data, SAVE_PATH + f'/{support_set_num}_{s}_suppotr_sets.json', query_c_num, query_c_size)
+    
+    # write the output JSON file
+    with open(SAVE_PATH + f'/{len(q_dict)}_{s}_{query_c_num}C_{query_c_size}PC_q_openset.json', 'w') as f:
+        json.dump(q_dict, f)
+    
+    return support_set_dict, q_dict
+
+def create_task_sets(support_set_dict, q_dict, support_set_num, query_c_num, query_c_size, s, save_path, n_shot, openset=False):
     
     task_sets = []
     SAVE_PATH = save_path + f'/{s}/{support_set_num}'
@@ -133,7 +198,7 @@ def create_task_sets(support_set_dict, q_dict, support_set_num, query_c_num, que
                     old_key = i//n_shot
                     new_dict[new_key] = ss_labels[old_key]
                 ss_labels = new_dict
-                
+            
             ss_wavs = support_set_dict['class_roots'][i]
             
             for q_wav in q_wavs:
@@ -144,9 +209,13 @@ def create_task_sets(support_set_dict, q_dict, support_set_num, query_c_num, que
                         task_sets.append([0, q_label, ss_labels[ii], q_wav, ss_wav])
     
     # write the output JSON file
-    with open(SAVE_PATH + f'/{len(task_sets)}_{s}_{support_set_num}_{query_c_num}C_{query_c_size}PC_task_sets.json', 'w') as f:
-        json.dump(task_sets, f)
-        
+    if openset:
+        with open(SAVE_PATH + f'/{len(task_sets)}_{s}_{support_set_num}_{query_c_num}C_{query_c_size}PC_task_sets_openset.json', 'w') as f:
+            json.dump(task_sets, f)
+    else:        
+        with open(SAVE_PATH + f'/{len(task_sets)}_{s}_{support_set_num}_{query_c_num}C_{query_c_size}PC_task_sets.json', 'w') as f:
+            json.dump(task_sets, f)
+            
     return task_sets
 
 def creat_f_s_sets(CODE_REPO_PATH, n_shot, k_way, query_c_num, query_c_size, train_support_set_num, test_support_set_num, val_support_set_num, val_support_set):
@@ -179,6 +248,22 @@ def creat_f_s_sets(CODE_REPO_PATH, n_shot, k_way, query_c_num, query_c_size, tra
     test_task_set = create_task_sets(test_support_set_dict, test_q_dict, 
                                     test_support_set_num, query_c_num, query_c_size, 'test', SAVE_PATH, n_shot)
 
+def creat_unknown_f_s_sets(CODE_REPO_PATH, n_shot, k_way, query_c_num, query_c_size, test_support_set_num):
+   
+    SAVE_PATH = f'/home/almogk/FSL_TL_E_C/data/FSL_SETS/{k_way}w_{n_shot}s_shot'
+    if os.path.exists(SAVE_PATH) == False:
+        os.mkdir(SAVE_PATH)
+        os.mkdir(SAVE_PATH + '/train')
+        os.mkdir(SAVE_PATH + '/test')
+        os.mkdir(SAVE_PATH + '/val')
+
+    # create the query sets
+    test_support_set_dict, test_q_dict = create_unknown_q_sets(CODE_REPO_PATH + '/data/test_datafile/esc_fsl_test_data.json', 
+                        n_shot, k_way, test_support_set_num, 'test', query_c_num, query_c_size, SAVE_PATH)
+    
+    test_task_set = create_task_sets(test_support_set_dict, test_q_dict, 
+                                    test_support_set_num, query_c_num, query_c_size, 'test', SAVE_PATH, n_shot, True)
+    
 def merge_dictionaries(dict1, dict2):
    
     merged_dict = {}
@@ -187,289 +272,179 @@ def merge_dictionaries(dict1, dict2):
 
     return merged_dict
 
+def create_task_of_ss_test_sets(support_set_dict, support_set_num, s, save_path, n_shot):
 
+    task_sets = []
+    SAVE_PATH = save_path + f'/data/FSL_SETS/5w_1s_shot/{s}/{support_set_num}'
+    # Iterate through all support sets
+    for i in range(support_set_num):
+        
+        ss_labels = support_set_dict['class_names'][i]
+        ss_wavs = support_set_dict['class_roots'][i]
 
+        # Create pairs of samples from the current support set
+        pairs_wav = list(itertools.combinations(ss_wavs, 2))
+        pairs_lable = list(itertools.combinations(ss_labels, 2))
+        
+        for pair_index, pair in enumerate(pairs_wav):
+            task_sets.append([0, pairs_lable[pair_index][0], pairs_lable[pair_index][1], pair[0], pair[1]])
+    
+    # write the output JSON file
+    with open(SAVE_PATH + f'/{len(task_sets)}_{s}_{support_set_num}_ss_task_sets.json', 'w') as f:
+        json.dump(task_sets, f)
+        
+    return task_sets
 
-def calc_recalls(S):
-    """
-    Computes recall at 1, 5, and 10 given a similarity matrix S.
-    By convention, rows of S are assumed to correspond to images and columns are captions.
-    """
-    assert(S.dim() == 2)
-    assert(S.size(0) == S.size(1))
-    if isinstance(S, torch.autograd.Variable):
-        S = S.data
-    n = S.size(0)
-    A2I_scores, A2I_ind = S.topk(10, 0)
-    I2A_scores, I2A_ind = S.topk(10, 1)
-    A_r1 = AverageMeter()
-    A_r5 = AverageMeter()
-    A_r10 = AverageMeter()
-    I_r1 = AverageMeter()
-    I_r5 = AverageMeter()
-    I_r10 = AverageMeter()
-    for i in range(n):
-        A_foundind = -1
-        I_foundind = -1
-        for ind in range(10):
-            if A2I_ind[ind, i] == i:
-                I_foundind = ind
-            if I2A_ind[i, ind] == i:
-                A_foundind = ind
-        # do r1s
-        if A_foundind == 0:
-            A_r1.update(1)
-        else:
-            A_r1.update(0)
-        if I_foundind == 0:
-            I_r1.update(1)
-        else:
-            I_r1.update(0)
-        # do r5s
-        if A_foundind >= 0 and A_foundind < 5:
-            A_r5.update(1)
-        else:
-            A_r5.update(0)
-        if I_foundind >= 0 and I_foundind < 5:
-            I_r5.update(1)
-        else:
-            I_r5.update(0)
-        # do r10s
-        if A_foundind >= 0 and A_foundind < 10:
-            A_r10.update(1)
-        else:
-            A_r10.update(0)
-        if I_foundind >= 0 and I_foundind < 10:
-            I_r10.update(1)
-        else:
-            I_r10.update(0)
+def make_task_sets_from_ss(support_set_path, k_way, n_shot, CODE_REPO_PATH, support_set_num):
+    
+    with open(support_set_path, 'r') as f:
+        support_set_dic = json.load(f)
+    
+    s = 'test'
+    task_sets = create_task_of_ss_test_sets(support_set_dic, support_set_num[-1], s, CODE_REPO_PATH, n_shot)
 
-    recalls = {'A_r1':A_r1.avg, 'A_r5':A_r5.avg, 'A_r10':A_r10.avg,
-                'I_r1':I_r1.avg, 'I_r5':I_r5.avg, 'I_r10':I_r10.avg}
-                #'A_meanR':A_meanR.avg, 'I_meanR':I_meanR.avg}
+def make_perso_ss_tresholds(cosine_distances):
+    
+    dis_ss = []
+    for i_cos in range(len(cosine_distances[0])):
+        
+        model_distances = [dist[i_cos] for dist in cosine_distances]
+    
+        
+        mc_pair = []
+        p_i = []
+        b_max_pred = []
+        for i, dis in enumerate(model_distances):
+            mc_pair.append(dis)
+            if (i+1) % 5 == 0:
+                b_max_pred.append([mc_pair, mc_pair.index(max(mc_pair))])
+                p_i.append(model_distances.index(max(mc_pair)))
+                mc_pair = []
+        dis_ss.append(b_max_pred)
+        
+    diff_all_M_list = []
+    std0_all_M_list = []
+    mean0_all_M_list = []
+    std_all_M_list = []
+    mean_all_M_list = []
+    min_all_M_list = []
+    max_all_M_list = []
+    
+    for i, dist in enumerate(dis_ss): 
+        diff_all_list = []
+        std0_all_list = []
+        mean0_all_list = []
+        std_all_list = []
+        mean_all_list = []
+        min_all_list = []
+        max_all_list = []
+        
+        for _, (ss_dist, posi_ind) in enumerate(dist):
+            
+            ss_dist_wo_posi = np.delete(ss_dist, posi_ind)
+            max_ind = np.argmax(ss_dist_wo_posi)
+            second_max_val = ss_dist_wo_posi[max_ind]
+            mean_ss = np.mean(ss_dist_wo_posi)
+            std_ss = np.std(ss_dist_wo_posi)
+            max_val = np.max(ss_dist)
+            
+            max_all_list.append(max_val)
+            min_all_list.append(np.min(ss_dist))
+            mean_all_list.append(np.mean(ss_dist))
+            std_all_list.append(np.std(ss_dist))
+            mean0_all_list.append(mean_ss)
+            std0_all_list.append(std_ss)
+            diff_all_list.append(ss_dist[posi_ind]- second_max_val)
+            
+        diff_all_M_list.append(diff_all_list)
+        std0_all_M_list.append(std0_all_list) 
+        mean0_all_M_list.append(mean0_all_list)
+        std_all_M_list.append(std_all_list)
+        mean_all_M_list.append(mean_all_list)
+        min_all_M_list.append(min_all_list)
+        max_all_M_list.append(max_all_list)
+        
+    perso_ss_tresholds = {'max': max_all_M_list,
+                        'min': min_all_M_list,
+                        'mean_all': mean_all_M_list,
+                        'std_all': std_all_M_list,
+                        'mean_0': mean0_all_M_list,
+                        'std_0': std0_all_M_list,
+                        'f_s_dif': diff_all_M_list}
+    
+    with open('/home/almogk/FSL_TL_E_C/data/FSL_SETS/5w_1s_shot/test/15000/ss_personal_tresh.json', 'w') as f:
+        json.dump(perso_ss_tresholds, f)
+        
+    return perso_ss_tresholds
 
-    return recalls
+def make_perso_ss_tresholds_openset(cosine_distances):
+    
+    dis_ss = []
+    for i_cos in range(len(cosine_distances[0])):
+        
+        model_distances = [dist[i_cos] for dist in cosine_distances]
+        
+        mc_pair = []
+        b_max_pred = []
+        for i, dis in enumerate(model_distances):
+            mc_pair.append(dis)
+            if (i+1) % 10 == 0:
+                b_max_pred.append(mc_pair)
+                mc_pair = []
+        dis_ss.append(b_max_pred)
+        
+    std_all_M_list = []
+    mean_all_M_list = []
+    min_all_M_list = []
+    max_all_M_list = []
+    
+    for i, dist in enumerate(dis_ss): 
+        std_all_list = []
+        mean_all_list = []
+        min_all_list = []
+        max_all_list = []
+        
+        for _, ss_dist in enumerate(dist):
+            
+            max_ind = np.argmax(ss_dist)
+            min_ind = np.argmin(ss_dist)
+            
+            max_val = ss_dist[max_ind]
+            min_val = ss_dist[min_ind]
+            mean_ss = np.mean(ss_dist)
+            std_ss = np.std(ss_dist)
+            
+            mean_ss_1 = np.mean(ss_dist[:4])
+            std_ss_1 = np.std(ss_dist[:4])
 
-def computeMatchmap(I, A):
-    assert(I.dim() == 3)
-    assert(A.dim() == 2)
-    D = I.size(0)
-    H = I.size(1)
-    W = I.size(2)
-    T = A.size(1)
-    Ir = I.view(D, -1).t()
-    matchmap = torch.mm(Ir, A)
-    matchmap = matchmap.view(H, W, T)
-    return matchmap
-
-def matchmapSim(M, simtype):
-    assert(M.dim() == 3)
-    if simtype == 'SISA':
-        return M.mean()
-    elif simtype == 'MISA':
-        M_maxH, _ = M.max(0)
-        M_maxHW, _ = M_maxH.max(0)
-        return M_maxHW.mean()
-    elif simtype == 'SIMA':
-        M_maxT, _ = M.max(2)
-        return M_maxT.mean()
-    else:
-        raise ValueError
-
-def sampled_margin_rank_loss(image_outputs, audio_outputs, nframes, margin=1., simtype='MISA'):
-    """
-    Computes the triplet margin ranking loss for each anchor image/caption pair
-    The impostor image/caption is randomly sampled from the minibatch
-    """
-    assert(image_outputs.dim() == 4)
-    assert(audio_outputs.dim() == 3)
-    n = image_outputs.size(0)
-    loss = torch.zeros(1, device=image_outputs.device, requires_grad=True)
-    for i in range(n):
-        I_imp_ind = i
-        A_imp_ind = i
-        while I_imp_ind == i:
-            I_imp_ind = np.random.randint(0, n)
-        while A_imp_ind == i:
-            A_imp_ind = np.random.randint(0, n)
-        nF = nframes[i]
-        nFimp = nframes[A_imp_ind]
-        anchorsim = matchmapSim(computeMatchmap(image_outputs[i], audio_outputs[i][:, 0:nF]), simtype)
-        Iimpsim = matchmapSim(computeMatchmap(image_outputs[I_imp_ind], audio_outputs[i][:, 0:nF]), simtype)
-        Aimpsim = matchmapSim(computeMatchmap(image_outputs[i], audio_outputs[A_imp_ind][:, 0:nFimp]), simtype)
-        A2I_simdif = margin + Iimpsim - anchorsim
-        if (A2I_simdif.data > 0).all():
-            loss = loss + A2I_simdif
-        I2A_simdif = margin + Aimpsim - anchorsim
-        if (I2A_simdif.data > 0).all():
-            loss = loss + I2A_simdif
-    loss = loss / n
-    return loss
-
-def compute_matchmap_similarity_matrix(image_outputs, audio_outputs, nframes, simtype='MISA'):
-    """
-    Assumes image_outputs is a (batchsize, embedding_dim, rows, height) tensor
-    Assumes audio_outputs is a (batchsize, embedding_dim, 1, time) tensor
-    Returns similarity matrix S where images are rows and audios are along the columns
-    """
-    assert(image_outputs.dim() == 4)
-    assert(audio_outputs.dim() == 3)
-    n = image_outputs.size(0)
-    S = torch.zeros(n, n, device=image_outputs.device)
-    for image_idx in range(n):
-            for audio_idx in range(n):
-                nF = max(1, nframes[audio_idx])
-                S[image_idx, audio_idx] = matchmapSim(computeMatchmap(image_outputs[image_idx], audio_outputs[audio_idx][:, 0:nF]), simtype)
-    return S
-
-def compute_pooldot_similarity_matrix(image_outputs, audio_outputs, nframes):
-    """
-    Assumes image_outputs is a (batchsize, embedding_dim, rows, height) tensor
-    Assumes audio_outputs is a (batchsize, embedding_dim, 1, time) tensor
-    Returns similarity matrix S where images are rows and audios are along the columns
-    S[i][j] is computed as the dot product between the meanpooled embeddings of
-    the ith image output and jth audio output
-    """
-    assert(image_outputs.dim() == 4)
-    assert(audio_outputs.dim() == 4)
-    n = image_outputs.size(0)
-    imagePoolfunc = nn.AdaptiveAvgPool2d((1, 1))
-    pooled_image_outputs = imagePoolfunc(image_outputs).squeeze(3).squeeze(2)
-    audioPoolfunc = nn.AdaptiveAvgPool2d((1, 1))
-    pooled_audio_outputs_list = []
-    for idx in range(n):
-        nF = max(1, nframes[idx])
-        pooled_audio_outputs_list.append(audioPoolfunc(audio_outputs[idx][:, :, 0:nF]).unsqueeze(0))
-    pooled_audio_outputs = torch.cat(pooled_audio_outputs_list).squeeze(3).squeeze(2)
-    S = torch.mm(pooled_image_outputs, pooled_audio_outputs.t())
-    return S
-
-def one_imposter_index(i, N):
-    imp_ind = random.randint(0, N - 2)
-    if imp_ind == i:
-        imp_ind = N - 1
-    return imp_ind
-
-def basic_get_imposter_indices(N):
-    imposter_idc = []
-    for i in range(N):
-        # Select an imposter index for example i:
-        imp_ind = one_imposter_index(i, N)
-        imposter_idc.append(imp_ind)
-    return imposter_idc
-
-def semihardneg_triplet_loss_from_S(S, margin):
-    """
-    Input: Similarity matrix S as an autograd.Variable
-    Output: The one-way triplet loss from rows of S to columns of S. Impostors are taken
-    to be the most similar point to the anchor that is still less similar to the anchor
-    than the positive example.
-    You would need to run this function twice, once with S and once with S.t(),
-    in order to compute the triplet loss in both directions.
-    """
-    assert(S.dim() == 2)
-    assert(S.size(0) == S.size(1))
-    N = S.size(0)
-    loss = torch.autograd.Variable(torch.zeros(1).type(S.data.type()), requires_grad=True)
-    # Imposter - ground truth
-    Sdiff = S - torch.diag(S).view(-1, 1)
-    eps = 1e-12
-    # All examples less similar than ground truth
-    mask = (Sdiff < -eps).type(torch.LongTensor)
-    maskf = mask.type_as(S)
-    # Mask out all examples >= gt with minimum similarity
-    Sp = maskf * Sdiff + (1 - maskf) * torch.min(Sdiff).detach()
-    # Find the index maximum similar of the remaining
-    _, idc = Sp.max(dim=1)
-    idc = idc.data.cpu()
-    # Vector mask: 1 iff there exists an example < gt
-    has_neg = (mask.sum(dim=1) > 0).data.type(torch.LongTensor)
-    # Random imposter indices
-    random_imp_ind = torch.LongTensor(basic_get_imposter_indices(N))
-    # Use hardneg if there exists an example < gt, otherwise use random imposter
-    imp_idc = has_neg * idc + (1 - has_neg) * random_imp_ind
-    # This could probably be vectorized too, but I haven't.
-    for i, imp in enumerate(imp_idc):
-        local_loss = Sdiff[i, imp] + margin
-        if (local_loss.data > 0).all():
-            loss = loss + local_loss
-    loss = loss / N
-    return loss
-
-def sampled_triplet_loss_from_S(S, margin):
-    """
-    Input: Similarity matrix S as an autograd.Variable
-    Output: The one-way triplet loss from rows of S to columns of S. Imposters are
-    randomly sampled from the columns of S.
-    You would need to run this function twice, once with S and once with S.t(),
-    in order to compute the triplet loss in both directions.
-    """
-    assert(S.dim() == 2)
-    assert(S.size(0) == S.size(1))
-    N = S.size(0)
-    loss = torch.autograd.Variable(torch.zeros(1).type(S.data.type()), requires_grad=True)
-    # Imposter - ground truth
-    Sdiff = S - torch.diag(S).view(-1, 1)
-    imp_ind = torch.LongTensor(basic_get_imposter_indices(N))
-    # This could probably be vectorized too, but I haven't.
-    for i, imp in enumerate(imp_ind):
-        local_loss = Sdiff[i, imp] + margin
-        if (local_loss.data > 0).all():
-            loss = loss + local_loss
-    loss = loss / N
-    return loss
-
-def adjust_learning_rate(base_lr, lr_decay, optimizer, epoch):
-    """Sets the learning rate to the initial LR decayed by 10 every lr_decay epochs"""
-    lr = base_lr * (0.1 ** (epoch // lr_decay))
-    print('now learning rate changed to {:f}'.format(lr))
-    for param_group in optimizer.param_groups:
-        param_group['lr'] = lr
-
-def adjust_learning_rate2(base_lr, lr_decay, optimizer, epoch):
-    """Sets the learning rate to the initial LR decayed by 10 every lr_decay epochs"""
-    for param_group in optimizer.param_groups:
-        cur_lr = param_group['lr']
-        print('current learing rate is {:f}'.format(lr))
-    lr = cur_lr  * 0.1
-    print('now learning rate changed to {:f}'.format(lr))
-    for param_group in optimizer.param_groups:
-        param_group['lr'] = lr
-
-def load_progress(prog_pkl, quiet=False):
-    """
-    load progress pkl file
-    Args:
-        prog_pkl(str): path to progress pkl file
-    Return:
-        progress(list):
-        epoch(int):
-        global_step(int):
-        best_epoch(int):
-        best_avg_r10(float):
-    """
-    def _print(msg):
-        if not quiet:
-            print(msg)
-
-    with open(prog_pkl, "rb") as f:
-        prog = pickle.load(f)
-        epoch, global_step, best_epoch, best_avg_r10, _ = prog[-1]
-
-    _print("\nPrevious Progress:")
-    msg =  "[%5s %7s %5s %7s %6s]" % ("epoch", "step", "best_epoch", "best_avg_r10", "time")
-    _print(msg)
-    return prog, epoch, global_step, best_epoch, best_avg_r10
-
-def count_parameters(model):
-    return sum([p.numel() for p in model.parameters() if p.requires_grad])
-
-
-
-PrenetConfig = namedtuple(
-  'PrenetConfig', ['input_size', 'hidden_size', 'num_layers', 'dropout'])
-
-RNNConfig = namedtuple(
-  'RNNConfig',
-  ['input_size', 'hidden_size', 'num_layers', 'dropout', 'residual'])
-
+            mean_ss_2 = np.mean(ss_dist[:1]+ss_dist[4:7])
+            std_ss_2 = np.std(ss_dist[:1]+ss_dist[4:7])
+            
+            mean_ss_3 = np.mean(ss_dist[1:2]+ss_dist[4:5]+ss_dist[7:9])
+            std_ss_3 = np.std(ss_dist[1:2]+ss_dist[4:5]+ss_dist[7:9])
+        
+            mean_ss_4 = np.mean(ss_dist[2:3]+ss_dist[5:6]+ss_dist[9])
+            std_ss_4 = np.std(ss_dist[2:3]+ss_dist[5:6]+ss_dist[9])
+            
+            mean_ss_5 = np.mean(ss_dist[2:3]+ss_dist[6:7]+ss_dist[8:])
+            std_ss_5 = np.std(ss_dist[2:3]+ss_dist[6:7]+ss_dist[8:])
+            
+            max_all_list.append(max_val)
+            min_all_list.append(min_val)
+            mean_all_list.append([mean_ss, mean_ss_1, mean_ss_2, mean_ss_3, mean_ss_4, mean_ss_5])
+            std_all_list.append([std_ss, std_ss_1, std_ss_2, std_ss_3, std_ss_4, std_ss_5])
+        
+        std_all_M_list.append(std_all_list)
+        mean_all_M_list.append(mean_all_list)
+        min_all_M_list.append(min_all_list)
+        max_all_M_list.append(max_all_list)
+        
+    perso_ss_tresholds = {'max': max_all_M_list,
+                        'min': min_all_M_list,
+                        'mean_all': mean_all_M_list,
+                        'std_all': std_all_M_list}
+    
+    with open('/home/almogk/FSL_TL_E_C/data/FSL_SETS/5w_1s_shot/test/15000/ss_personal_tresh_no_q.json', 'w') as f:
+        json.dump(perso_ss_tresholds, f)
+        
+    return perso_ss_tresholds
