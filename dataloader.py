@@ -222,7 +222,15 @@ class ESC_FSL_Dataset(Dataset):
         self.noise = self.audio_conf.get('noise')
         
         print('use dataset mean {:.3f} and std {:.3f} to normalize the input.'.format(self.norm_mean, self.norm_std))
-        # if add noise for data augmentation
+        
+        # self.fbank_queue = []
+        # self._precompute_fbank()
+        # # if add noise for data augmentation
+    
+    def _precompute_fbank(self):
+        for datum in self.data:
+            fbank1, fbank2 = self._wav2fbank(datum[3], datum[4])
+            self.fbank_queue.append([fbank1, fbank2])
 
     def _wav2fbank(self, filename, filename2):
    
@@ -281,7 +289,9 @@ class ESC_FSL_Dataset(Dataset):
         """
         datum = self.data[index]
         
+        # fbank1, fbank2 = self.fbank_queue[index]
         fbank1, fbank2 = self._wav2fbank(datum[3], datum[4])
+        
         
         label_indices = int(datum[0])
         real_class = [datum[1], datum[2], datum[3], datum[4]]

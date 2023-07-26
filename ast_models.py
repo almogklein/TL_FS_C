@@ -5,13 +5,15 @@
 # @Email   : yuangong@mit.edu
 # @File    : ast_models.py
 
+import numpy as np
 import torch
 import os, wget
 import torch, timm
 import torch.nn as nn
+import torch.nn.functional as F
 from torch.cuda.amp import autocast
 from timm.models.layers import to_2tuple, trunc_normal_
-
+from scipy.spatial.distance import mahalanobis
 
 # override the timm package to relax the input shape constraint.
 class PatchEmbed(nn.Module):
@@ -42,10 +44,13 @@ class ContrastiveLoss(nn.Module):
     def forward(self, input1, input2, y):
         
         diff = input1 - input2
+        
         dist_sq = torch.sum(torch.pow(diff, 2), 1)
         dist = torch.sqrt(dist_sq)
+        
         mdist = self.margin - dist
         dist = torch.clamp(mdist, min=0.0)
+        
         loss = y * dist_sq + (1 - y) * torch.pow(dist, 2)
         loss = torch.sum(loss) / 2.0 / input1.size()[0]
         
@@ -249,7 +254,6 @@ class Siamese_ASTModel(nn.Module):
             ast_model.load_state_dict(checkpoint)
             ast_model = ast_model.to(torch.device("cuda:0"))
             self.v = ast_model.module.v
-            # self.ast = ast_model.to(torch.device("cuda:0"))
             
         else:
             ast_mdl = ASTModel(label_dim=35, input_tdim=input_tdim, imagenet_pretrain=imagenet_pretrain, audioset_pretrain=audioset_pretrain)
@@ -257,33 +261,21 @@ class Siamese_ASTModel(nn.Module):
             ast_model = torch.nn.DataParallel(ast_mdl, device_ids=[0])
             ast_model = ast_model.to(torch.device("cuda:0"))
             self.v = ast_model.module.v
-            # self.ast = ast_model.to(torch.device("cuda:0"))
             
             
         if self.con_los:
            pass
         else:    
             if self.fc == 's':
-                self.fc_s = nn.Linear(1536, 1)
-                # nn.Sequential(
-                #     nn.Linear(1536, 1),
-                #     nn.Sigmoid()
-                # )
-            if self.fc == 'm':
-                # self.fc_m = nn.Sequential(
-                #     nn.Linear(768, 1),
-                #     nn.Sigmoid(dim=1)
-                # )
-                self.fc_m = nn.Linear(768, 1)
+                # self.fc_s = nn.Linear(1536, 1)
+                self.fc_s = nn.Sequential(nn.LayerNorm(1536), nn.Linear(1536, 1))
                 
-                # self.fc_m = nn.DataParallel(self.fc_m)
-                # self.ast = nn.DataParallel(self.ast)
+            if self.fc == 'm':
+                # self.fc_m = nn.Linear(768, 1)
+                self.fc_m = nn.Sequential(nn.LayerNorm(768), nn.Linear(768, 1))
     
     def forward_once(self, x):
         
-        # ve = self.ast(x)[1]
-        
-        # # expect input x = (batch_size, time_frame_num, frequency_bins), e.g., (12, 1024, 128)
         x = x.unsqueeze(1)
         x = x.transpose(2, 3)
 
@@ -301,10 +293,7 @@ class Siamese_ASTModel(nn.Module):
             x = blk(x)
             
         x = self.v.norm(x)
-        x = (x[:, 0] + x[:, 1]) / 2
-
-        # vec_emmbeding_norm = x.detach().clone()
-        
+        x = (x[:, 0] + x[:, 1]) / 2        
         
         return x
             
@@ -323,17 +312,36 @@ class Siamese_ASTModel(nn.Module):
             
             return x1_embedding, x2_embedding
         
-        else:    
+        else:
             if self.fc == 's':
                 output = torch.cat((x1_embedding, x2_embedding), 1)
                 output = self.fc_s(output)
             
             if self.fc == 'm':
+                
                 # Multiply (element-wise) the feature vectors of the two images together, 
                 # to generate a combined feature vector representing the similarity between the two.
-                # combined_features = x1_embedding * x2_embedding
                 combined_features = x1_embedding * x2_embedding
+                
                 # Pass the combined feature vector through classification head to get similarity value in the range of 0 to 1.
                 output = self.fc_m(combined_features)
+            
+            if self.fc == 'maha':
+                
+                # # Assuming x1_embedding and x2_embedding have shape (batch_size, embedding_dim)
+                x1_embedding = x1_embedding.unsqueeze(2)  # Add an extra dimension (batch_size, embedding_dim, 1)
+                x2_embedding = x2_embedding.unsqueeze(2)
+
+                # Compute Mahalanobis distance
+                diff = x1_embedding - x2_embedding
+                
+                # Calculate squared Mahalanobis distance
+                mahalanobis_dist_sq = torch.matmul(diff.transpose(1, 2), diff).squeeze(2)
+                
+                # Apply min-max normalization to the distances
+                normalized_dist = (mahalanobis_dist_sq - mahalanobis_dist_sq.min()) / (mahalanobis_dist_sq.max() - mahalanobis_dist_sq.min())
+
+                # Invert the distances to get similarity scores
+                output = 1 - normalized_dist
             
             return output

@@ -1,16 +1,15 @@
-# from sklearn.metrics import accuracy_score, confusion_matrix, classification_report
-# from torch.optim.lr_scheduler import ReduceLROnPlateau
-# from speechbrain.speechbrain.utils import Accuracy
-# import matplotlib.pyplot as plt
-# import commentjson as json
-# from pathlib import Path
-# import seaborn as sns
-# import random, csv
-# import itertools
 # ######################## Installations ###############################
+import itertools
 import os
 import json
+import random
 import time
+from sklearn.metrics import balanced_accuracy_score, classification_report, accuracy_score
+from sklearn.ensemble import RandomForestClassifier, GradientBoostingClassifier
+from sklearn.svm import SVC
+import xgboost as xgb
+from tqdm import tqdm
+import joblib
 import torch
 import pickle
 import datetime
@@ -23,15 +22,17 @@ import stats as st
 import numpy as np
 import pandas as pd
 import torch.nn as nn
+from scipy import stats
 import cosin_calc as cc
 import infering as infer
 import ast_models as ast_mo
 from util import AverageMeter
 from torch.cuda.amp import autocast, GradScaler
 from sklearn.model_selection import ParameterGrid
+from sklearn.ensemble import RandomForestClassifier
 # #####################################################################
 
-def sieamis_ast_infer(audio_model, test_loader):
+def sieamis_ast_infer(audio_model, test_loader, cla):
     
     batch_time = AverageMeter()
         
@@ -50,10 +51,12 @@ def sieamis_ast_infer(audio_model, test_loader):
     
     A_targets = []
     A_real_class = []
+    x_d = []
+    y_d = []
     
     with torch.no_grad():
-        for _, (audio_input1, audio_input2, labels, real_class) in enumerate(test_loader):
-            
+        for iii, (audio_input1, audio_input2, labels, real_class) in enumerate(test_loader):
+            # if iii < 100:
             audio_input1 = audio_input1.to(device, non_blocking=True)
             audio_input2 = audio_input2.to(device, non_blocking=True)
 
@@ -61,6 +64,9 @@ def sieamis_ast_infer(audio_model, test_loader):
             audio_output = audio_model(audio_input1, audio_input2)
             
             predictions = audio_output.to('cpu').detach()
+            x_d.extend([a[0] for a in [np.array(audio_output.to('cpu').detach()).tolist()][0]])
+            y_d.extend([a for a in [np.array(labels.to('cpu').detach()).tolist()][0]])
+            
             predicted_thresholds = (predictions > 0.5).float()
 
             # compute the loss
@@ -77,13 +83,15 @@ def sieamis_ast_infer(audio_model, test_loader):
             batch_time.update(time.time() - end)
             end = time.time()
 
-        audio_output = torch.cat(A_predictions_tresholds)
-        target = torch.cat(A_targets)
-        A_predictions_tresholds = torch.cat(A_predictions_tresholds)
-        
-        stats = st.calculate_stats_(audio_output, target.to('cpu').detach())
+    cla_pred = cla.predict(np.array(x_d).reshape(-1, 1)) 
+    
+    audio_output = torch.cat(A_predictions_tresholds)
+    target = torch.cat(A_targets)
+    A_predictions_tresholds = torch.cat(A_predictions_tresholds)
+    
+    stats = st.calculate_stats_(audio_output, target.to('cpu').detach())
 
-    return stats, target, A_predictions_tresholds, A_predictions, A_real_class
+    return stats, target, A_predictions_tresholds, A_predictions, A_real_class, [x_d, y_d, cla_pred]
 
 def preper_data_for_ast_model(parser_param, class_map):
     
@@ -129,7 +137,7 @@ def preper_data_for_ast_model(parser_param, class_map):
 
     return train_loader, val_loader, audio_model, args
 
-def validate_sieamis(audio_model, loader, device, loss_fun):
+def validate_sieamis(audio_model, loader, device, loss_fun, classifi_modle):
         
         batch_time = AverageMeter()
         
@@ -144,10 +152,13 @@ def validate_sieamis(audio_model, loader, device, loss_fun):
         end = time.time()
         A_predictions = []
         A_predictions_tresholds = []
+        x_data_val = []
+        y_data_val = []
         
         A_targets = []
         A_loss = []
         A_real_class = []
+        rf_pred = []
         
         with torch.no_grad():
             for _, (audio_input1, audio_input2, labels, real_class) in enumerate(loader):
@@ -155,18 +166,21 @@ def validate_sieamis(audio_model, loader, device, loss_fun):
                 audio_input1 = audio_input1.to(device, non_blocking=True)
                 audio_input2 = audio_input2.to(device, non_blocking=True)
 
-                # compute output
-                audio_output = audio_model(audio_input1, audio_input2)
-                
-                predictions = audio_output.to('cpu').detach()
-                predicted_thresholds = (predictions > 0.5).float()
-
-                # compute the loss
                 labels = labels.view(labels.shape[0], -1)
                 labels = labels.to(torch.float32)
                 labels = labels.to(device, non_blocking=True)
                 
+                # compute output
+                audio_output = audio_model(audio_input1, audio_input2)
+
+                # compute the loss
                 loss = loss_fun(audio_output.half(), labels.half())
+                
+                predictions = audio_output.to('cpu').detach()
+                predicted_thresholds = (predictions > 0.5).float()
+                
+                x_data_val.extend([a[0] for a in [np.array(audio_output.to('cpu').detach()).tolist()][0]])
+                y_data_val.extend([a[0] for a in [np.array(labels.to('cpu').detach()).tolist()][0]])
                 
                 A_targets.append(labels.to('cpu').detach())
                 A_real_class.append(real_class)
@@ -183,9 +197,19 @@ def validate_sieamis(audio_model, loader, device, loss_fun):
             target = torch.cat(A_targets)
             loss = np.mean(A_loss)
             
+            xgb_classifier = classifi_modle[0]
+            rf_classifier = classifi_modle[1]
+            gb_classifier = classifi_modle[2]
+            svm_classifier = classifi_modle[3]
+            
+            xgb_y_hat_data_val = xgb_classifier.predict(np.array(x_data_val).reshape(-1, 1)) 
+            rf_y_hat_data_val = rf_classifier.predict(np.array(x_data_val).reshape(-1, 1)) 
+            gb_y_hat_data_val = gb_classifier.predict(np.array(x_data_val).reshape(-1, 1)) 
+            svm_y_hat_data_val = svm_classifier.predict(np.array(x_data_val).reshape(-1, 1)) 
+            
             stats = st.calculate_stats_(audio_output_, target)
 
-        return stats, loss, target, audio_output_, A_real_class, audio_output
+        return stats, loss, target, audio_output_, A_real_class, audio_output, [x_data_val, y_data_val, [xgb_y_hat_data_val, rf_y_hat_data_val, gb_y_hat_data_val, svm_y_hat_data_val]]
     
 def super_vi_ast_cross_val(epochs, batch_size, cv_folds, class_lookup):
     
@@ -279,7 +303,7 @@ def train_ast_supervie_lerning(train_loader, val_loader, audio_model, args):
     per_sample_dnn_time = AverageMeter()
     progress = []
     # best_cum_mAP is checkpoint ensemble from the first epoch to the best epoch
-    best_epoch, best_cum_epoch, best_mAP, best_acc, best_cum_mAP = 0, 0, -np.inf, -np.inf, -np.inf
+    best_epoch, _, best_mAP, best_acc, _ = 0, 0, -np.inf, -np.inf, -np.inf
     global_step, epoch = 0, 0
     start_time = time.time()
     exp_dir = args.exp_dir
@@ -451,10 +475,10 @@ def train_ast_supervie_lerning(train_loader, val_loader, audio_model, args):
         np.savetxt(exp_dir + '/result.csv', result, delimiter=',')
         print('validation finished')
 
-        if mAP > best_mAP:
-            best_mAP = mAP
-            if main_metrics == 'mAP':
-                best_epoch = epoch
+        # if mAP > best_mAP:
+        #     best_mAP = mAP
+        #     if main_metrics == 'mAP':
+        #         best_epoch = epoch
 
         if acc > best_acc:
             best_acc = acc
@@ -508,24 +532,30 @@ def preper_data_for_sieamis_ast_model_train_test_val(args, pair_path, batch_size
                       'noise': args.noise}
 
     print('start loading ESC_FSL_Dataset:\n')
+    begin_time_all = time.time()
     train_loader = torch.utils.data.DataLoader(
         dataloader.ESC_FSL_Dataset(pair_path[0], audio_conf=train_audio_conf), 
         batch_size=batch_size, shuffle=False, num_workers=args.num_workers, pin_memory=True)
     print('finish loading train_loader\n')
+    print('Loading time: {:.3f}'.format(time.time()-begin_time_all))
     
+    begin_time = time.time()
     test_loader = torch.utils.data.DataLoader(
         dataloader.ESC_FSL_Dataset(pair_path[1], audio_conf=test_audio_conf),
         batch_size=batch_size, shuffle=False, num_workers=args.num_workers, pin_memory=True)
     print('finish loading test_loader\n')
+    print('Loading time: {:.3f}'.format(time.time()-begin_time))
 
+    begin_time = time.time()
     val_loader = torch.utils.data.DataLoader(
         dataloader.ESC_FSL_Dataset(pair_path[2], audio_conf=val_audio_conf),
         batch_size=batch_size, shuffle=False, num_workers=args.num_workers, pin_memory=True)
     print('finish loading val_loader\n')
+    print('Loading time for all: {:.3f}'.format(time.time()-begin_time_all))
 
     return train_loader, val_loader, test_loader
 
-def run_sieamis_ast(train_loader, val_loader, audio_model, args, models_names, mod_index, ind, cont=False):
+def run_sieamis_ast(train_loader, val_loader, audio_model, args, models_names, mod_index, cont=False):
     
     print(datetime.datetime.now())
     device = torch.device("cuda:0")
@@ -533,6 +563,7 @@ def run_sieamis_ast(train_loader, val_loader, audio_model, args, models_names, m
     torch.set_grad_enabled(True)
 
     # Initialize all of the statistics we want to keep track of
+    
     batch_time = AverageMeter()
     per_sample_time = AverageMeter()
     data_time = AverageMeter()
@@ -540,7 +571,7 @@ def run_sieamis_ast(train_loader, val_loader, audio_model, args, models_names, m
     loss_meter = AverageMeter()
     per_sample_dnn_time = AverageMeter()
     
-    global_step, epoch = 0, 0
+    global_step, epoch, best_acc, best_classifier = 0, 0, 0, 0
     start_time = time.time()
     exp_dir = args.exp_dir
     
@@ -588,9 +619,10 @@ def run_sieamis_ast(train_loader, val_loader, audio_model, args, models_names, m
         print('---------------')
         print(datetime.datetime.now())
         print("current #epochs=%s, #steps=%s" % (epoch, global_step))
-
-        for i, (audio_input1, audio_input2, labels, _) in enumerate(train_loader):
-            
+        x_data = []
+        y_data = []
+        
+        for i, (audio_input1, audio_input2, labels, _) in tqdm(enumerate(train_loader)):
             B = audio_input1.size(0)
             begin_time_batch = time.time()
             
@@ -600,7 +632,6 @@ def run_sieamis_ast(train_loader, val_loader, audio_model, args, models_names, m
             labels = labels.view(labels.shape[0], -1)
             labels = labels.to(torch.float32)
             labels = labels.to(device, non_blocking=True)
-            
 
             data_time.update(time.time() - begin_time_batch)
             per_sample_data_time.update(((time.time() - begin_time_batch) / audio_input1.shape[0]) * 2)
@@ -623,14 +654,13 @@ def run_sieamis_ast(train_loader, val_loader, audio_model, args, models_names, m
                 else:    
                     audio_output = audio_model(audio_input1, audio_input2)  
                     loss = loss_fn(audio_output.half(), labels.half())
-
+            
+            x_data.extend([a[0] for a in [np.array(audio_output.to('cpu').detach()).tolist()][0]])
+            y_data.extend([a[0] for a in [np.array(labels.to('cpu').detach()).tolist()][0]])
             
             scaler.scale(loss).backward()
             scaler.step(optimizer)
             scaler.update()
-            
-            # loss.backward()
-            # optimizer.step()
 
             # record loss
             loss_meter.update(loss.item(), B)
@@ -660,14 +690,44 @@ def run_sieamis_ast(train_loader, val_loader, audio_model, args, models_names, m
                     return
 
             global_step += 1
-            
+        
+        xgb_classifier = xgb.XGBClassifier(n_estimators=100, max_depth=4, scale_pos_weight=4)
+        xgb_classifier.fit(np.array(x_data).reshape(-1, 1), y_data)
+        
+        # Train the Random Forest model
+        rf_classifier = RandomForestClassifier(n_estimators=100, max_depth=4, min_samples_split=2, min_samples_leaf=1, class_weight={0:1, 1:4})
+        rf_classifier.fit(np.array(x_data).reshape(-1, 1), y_data)
+        
+        gb_classifier = GradientBoostingClassifier(n_estimators=100, max_depth=4, min_samples_split=2, min_samples_leaf=1)
+        gb_classifier.fit(np.array(x_data).reshape(-1, 1), y_data)
+        
+        svm_classifier = SVC(class_weight={0:1, 1:4})
+        svm_classifier.fit(np.array(x_data).reshape(-1, 1), y_data)
+        
+        classifiers = [xgb_classifier, rf_classifier, gb_classifier, svm_classifier]
+        
         end_epoch__time1 = time.time()
         print('finished training  epoch at:')
         print(f'{end_epoch__time1 - begin_time} sec\t {(end_epoch__time1 - begin_time)/60} min\n')
         
-        
         print('start validation')
-        stats, valid_loss, target, A_predictions_tresholds, A_real_class, A_predictions = validate_sieamis(audio_model, val_loader, device, loss_fn)
+        stats, valid_loss, target, A_predictions_tresholds, A_real_class, A_predictions, classi_data = validate_sieamis(audio_model, val_loader, device, loss_fn, classifiers)
+        
+        x_, y_, pred_mo  = classi_data
+        xgb_pred, rf_pred, gb_pred, svm_pred = pred_mo
+        
+        balanc_accuracy_b_xgb = balanced_accuracy_score(y_, xgb_pred)
+        print('xgb BINARY BALANCED_ACC: ', balanc_accuracy_b_xgb)
+        
+        balanc_accuracy_b_rf = balanced_accuracy_score(y_, rf_pred)
+        print('rf BINARY BALANCED_ACC: ', balanc_accuracy_b_rf)
+        
+        balanc_accuracy_b_gb = balanced_accuracy_score(y_, gb_pred)
+        print('gb BINARY BALANCED_ACC: ', balanc_accuracy_b_gb)
+        
+        balanc_accuracy_b_svm = balanced_accuracy_score(y_, svm_pred)
+        print('svm BINARY BALANCED_ACC: ', balanc_accuracy_b_svm)
+        
         
         end_epoch__time = time.time()
         print('finished val  epoch at:')
@@ -703,6 +763,28 @@ def run_sieamis_ast(train_loader, val_loader, audio_model, args, models_names, m
         
         finish_time = time.time()
         print('epoch {:d} training time: {:.3f}'.format(epoch, finish_time-begin_time))
+        if np.max([balanc_accuracy_b_xgb, balanc_accuracy_b_rf, balanc_accuracy_b_gb, balanc_accuracy_b_svm]) > best_classifier:
+            
+            best_classifier = np.max([balanc_accuracy_b_xgb, balanc_accuracy_b_rf, balanc_accuracy_b_gb, balanc_accuracy_b_svm])
+            best_model_ind = np.argmax([balanc_accuracy_b_xgb, balanc_accuracy_b_rf, balanc_accuracy_b_gb, balanc_accuracy_b_svm])
+            best_classi = classifiers[best_model_ind]
+            exp_dir_ = exp_dir + f'/{models_names[mod_index]}'
+            
+            if best_model_ind > 0:
+                # Save the Support Vector Machine (SVM) model
+                joblib.dump(best_classi, exp_dir_+'/model.pkl')
+            else:
+                # Save the XGBoost model
+                best_classi.save_model(exp_dir_+'/xgboost_model.model')
+        
+        if acc > best_acc:
+            
+            exp_dir_ = exp_dir + f'/{models_names[mod_index]}'
+            best_acc = acc
+            
+            torch.save(audio_model.state_dict(), "%s/sieamis_audio_model.pth" % (exp_dir_))
+            torch.save(optimizer.state_dict(), "%s/sieamis_optim_state.pth" % (exp_dir_))
+           
         
         epoch += 1
         scheduler.step()
@@ -721,7 +803,7 @@ def run_sieamis_ast(train_loader, val_loader, audio_model, args, models_names, m
     print(f"\nfinished all {args.n_epochs} training...")
     print('training time: {:.3f}'.format(time.time()-start_time))
     
-    return audio_model, optimizer
+    return audio_model, optimizer, best_classi
 
 def main():
     
@@ -741,9 +823,16 @@ def main():
                     '25': 16, '26': 17, '27': 18, '28': 19, '29': 20, '30': 21, '31': 22,
                     '32': 23, '33': 24, '34': 25, '35': 26, '38': 27, '40': 28, '41': 29,
                     '42': 30, '43': 31, '45': 32, '48': 33, '49': 34}
-    class_lookup_10 = {'0': 0, '3': 1, '9': 2, '19': 3, '21': 4, '36': 5, '39': 6, '44': 7, '46': 8, '47': 9}
-    class_lookup_5 = {'6': 0, '12': 1, '23': 2, '24': 3, '37': 4}
+    class_lookup_10 = {'00': 0, '03': 1, '09': 2, '19': 3, '21': 4, '36': 5, '39': 6, '44': 7, '46': 8, '47': 9, 'unknown': 'unknown'}
+    class_lookup_5 = {'06': 0, '12': 1, '23': 2, '24': 3, '37': 4}
     
+    id2label_map = {0: 'dog', 1: 'rooster', 2: 'pig', 3: 'cow', 4: 'frog', 5: 'cat', 6: 'hen', 7: 'insects',
+             8: 'sheep', 9: 'crow', 10: 'rain', 11: 'sea_waves', 12: 'crackling_fire', 13: 'crickets', 14: 'chirping_birds', 15: 'water_drops',
+             16: 'wind', 17: 'pouring_water', 18: 'toilet_flush', 19: 'thunderstorm', 20: 'crying_baby', 21: 'sneezing', 22: 'clapping', 23: 'breathing',
+             24: 'coughing', 25: 'footsteps', 26: 'laughing', 27: 'brushing_teeth', 28: 'snoring', 29: 'drinking_sipping', 30: 'door_wood_knock', 31: 'mouse_click',
+             32: 'keyboard_typing', 33: 'door_wood_creaks', 34: 'can_opening', 35: 'washing_machine', 36: 'vacuum_cleaner', 37: 'clock_alarm', 38: 'clock_tick',
+             39: 'glass_breaking', 40: 'helicopter', 41: 'chainsaw', 42: 'siren', 43: 'car_horn', 44: 'engine', 45: 'train', 46: 'church_bells', 47: 'airplane',
+             48: 'fireworks', 49: 'hand_saw', 50: 'unknown'}
    
     epochs = 15
     batch_size = 20
@@ -751,7 +840,6 @@ def main():
     
     Train_base_model = False
     if Train_base_model:
-        
         data_prep.get_data_for_ast_model(ESC50_PATH, CODE_REPO_PATH, train_class_names, test_class_names, val_class_names, class_lookup_35)
         super_vi_ast_cross_val(epochs, batch_size, cv_folds, class_lookup_35)
 
@@ -764,32 +852,34 @@ def main():
     query_c_size = [1, 4] # number of query examples per query class
     
     # set the sizes of the support sets
-    train_support_set_num = [5000, 50000]
-    test_support_set_num = [1000, 5000, 15000]
-    val_support_set_num = 120
+    train_support_set_num = [5000]
+    test_support_set_num = [15000]
+    val_support_set_num = [120]
     
     make_task_sets_from_q = False
     if make_task_sets_from_q:
-        
        u.make_task_sets_from_q(k_way, n_shot, train_support_set_num, query_c_num, query_c_size, CODE_REPO_PATH, test_support_set_num, val_support_set_num)
     
     make_task_sets_from_ss = False
     if make_task_sets_from_ss:
         
-        support_set_path = '/home/almogk/FSL_TL_E_C/data/FSL_SETS/5w_1s_shot/test/15000/15000_test_suppotr_sets.json'
-        u.make_task_sets_from_ss(support_set_path, k_way, n_shot, CODE_REPO_PATH, test_support_set_num)
+        flag = 'val'
+        if flag == 'test':
+            support_set_path = CODE_REPO_PATH + f'/data/FSL_SETS/5w_1s_shot/test/15000/15000_test_suppotr_sets.json'
+            u.make_task_sets_from_ss(support_set_path, k_way, n_shot, CODE_REPO_PATH, test_support_set_num, flag)
+        elif flag == 'val': 
+            support_set_path = CODE_REPO_PATH + f'/data/FSL_SETS/5w_1s_shot/val/120/120_val_suppotr_sets.json'
+            u.make_task_sets_from_ss(support_set_path, k_way, n_shot, CODE_REPO_PATH, val_support_set_num, flag)
     
     make_task_sets_from_unknown = False
-    if make_task_sets_from_unknown:    
-        u.make_task_sets_from_unknown_q(k_way, n_shot, query_c_num, query_c_size, CODE_REPO_PATH, test_support_set_num)
+    if make_task_sets_from_unknown:
+        u.make_task_sets_from_unknown_q(k_way, n_shot, query_c_num, query_c_size, CODE_REPO_PATH, val_support_set_num, text='val', data_path='/data/val_datafile/esc_fsl_val_data.json')
     
-    output_json = CODE_REPO_PATH + f'/data/FSL_SETS/5w_1s_shot/test/embeddings___test_output.json'
-    ft_model_dir_pattern = "/home/almogk/FSL_TL_E_C/ast_class_exp/{}/{}/models/best_audio_model.pth"
-    audio_samples_json = "/home/almogk/FSL_TL_E_C/data/test_datafile/esc_fsl_test_data.json"
-    
-    EXTRACT_EMBEDDINGS = False
-    if EXTRACT_EMBEDDINGS:
-        
+    EXTRACT_EMBEDDINGS_AST = False
+    if EXTRACT_EMBEDDINGS_AST:
+        output_json = CODE_REPO_PATH + f'/data/FSL_SETS/5w_1s_shot/embeddings_all_output.json'
+        ft_model_dir_pattern = "/home/almogk/FSL_TL_E_C/ast_class_exp/{}/{}/models/best_audio_model.pth"
+        audio_samples_json = "/home/almogk/FSL_TL_E_C/data/data_files/data.json" 
         audio_samples = infer.load_audio_samples(audio_samples_json)   
         
         audio_model_FF = infer.load_ast_tl_no_ft_model(512, False, False)
@@ -802,8 +892,8 @@ def main():
         
         embeddings_full = u.merge_dictionaries(embeddings_no_ft, embeddings)   
         infer.save_embeddings(embeddings_full, output_json)
-    else:     
-        
+    else:
+        output_json = CODE_REPO_PATH + f'/data/FSL_SETS/5w_1s_shot/embeddings_all_output.json' 
         with open(output_json, 'r') as f:
             embeddings_full = json.load(f)
             embeddings_full = {key: np.array(value) for key, value in embeddings_full.items()}
@@ -816,113 +906,459 @@ def main():
     INFER = False
     if INFER:
         
-        # pair_dic = u.make_all_pairs(CODE_REPO_PATH, test_support_set_num, query_c_num, query_c_size, k_way)
-        save_file_path = '/home/almogk/FSL_TL_E_C/data/FSL_SETS/5w_1s_shot/test/15000/'
+        all_pairs = False
+        if all_pairs:
+            pair_dic = u.make_all_pairs(CODE_REPO_PATH, test_support_set_num, query_c_num, query_c_size, k_way)
         
-        balanced_t = []
-        with open(save_file_path + f'/75000_test_15000__1C_1PC_task_sets.json', 'r') as f:
-            pairs = json.load(f)
+        save_file_path = CODE_REPO_PATH + f'/data/FSL_SETS/5w_1s_shot/'
+        
+        test_pairs_q = u.read_json(save_file_path + f'/test/15000/75000_test_15000__1C_1PC_task_sets.json')
+        test_pairs_no_q = u.read_json(save_file_path + f'/test/15000/150000_test_15000_ss_task_sets.json')
+ 
+        pairs_q = u.read_json(save_file_path + f'/val/120/3000_val_120__5C_1PC_task_sets.json')
+        pairs_no_q = u.read_json(save_file_path + f'/val/120/1200_val_120_ss_task_sets.json')
 
-        cosine_distances = cc.calculate_cosine_distances(embeddings_full, pairs)
-        
-        # perso_ss_tresholds = u.make_perso_ss_tresholds_openset(cosine_distances)
-        # perso_ss_tresholds = u.make_perso_ss_tresholds(cosine_distances)
-        
-        with open('/home/almogk/FSL_TL_E_C/data/FSL_SETS/5w_1s_shot/test/15000/ss_personal_tresh_no_q.json', 'r') as f:
-            perso_ss_tresholds_no_q = json.load(f)
-       
-        with open('/home/almogk/FSL_TL_E_C/data/FSL_SETS/5w_1s_shot/test/15000/ss_personal_tresh.json', 'r') as f:
-            perso_ss_tresholds = json.load(f)
-        
-        tresh_sig_const = [0.1, 0.3, 0.5, 1, 1.2, 1.3, 1.5, 2]
-        for sig_ind, sig in enumerate(tresh_sig_const):
-        
-            ss_tresholds_no_q = []
-            ss_tresholds_no_q_max = []
-            ss_tresholds_all = []
-            ss_tresholds_all_0 = []
-            for i in range(len(perso_ss_tresholds_no_q['mean_all'])):
-                
-                ss_tresholds_no_q.append([mean[0] + sig*std[0] for mean, std in zip(perso_ss_tresholds_no_q['mean_all'][i], perso_ss_tresholds_no_q['std_all'][i])])
-                ss_tresholds_all.append([mean + sig*std for mean, std in zip(perso_ss_tresholds['mean_all'][i], perso_ss_tresholds['std_all'][i])])
-                ss_tresholds_all_0.append([mean + sig*std for mean, std in zip(perso_ss_tresholds['mean_0'][i], perso_ss_tresholds['std_0'][i])])
-                ss_tresholds_no_q_max.append(perso_ss_tresholds_no_q['max'][i])
-
-            bc_p, accuracies_b, reports_b, conf_matrices_b = cc.evaluate_classification_per_ss(cosine_distances, pairs, ss_tresholds_all)
-            _, accuracies_b_0, reports_b_0, conf_matrices_b_0 = cc.evaluate_classification_per_ss(cosine_distances, pairs, ss_tresholds_all_0)
-            _, accuracies_b_per_ss_, _, _ = cc.evaluate_classification_per_ss(cosine_distances, pairs, ss_tresholds_no_q)
-            _, accuracies_b_per_ss_nax, _, _ = cc.evaluate_classification_per_ss(cosine_distances, pairs, ss_tresholds_no_q_max)
+        sim_create = False
+        if sim_create:
             
-            # # # bc_p, accuracies_b, reports_b, conf_matrices_b = cc.evaluate_classification_per_ss_balanc(cosine_distances, pairs, perso_ss_tresholds['threshold'])
+            cosine_distances = cc.calculate_cosine_distances(embeddings_full, pairs_q)
+            cosine_distances_no_q = cc.calculate_cosine_distances(embeddings_full, pairs_no_q)
             
-            cc.plot_ss_scors(accuracies_b, accuracies_b_0, accuracies_b_per_ss_, accuracies_b_per_ss_nax, models_names, save_file_path+f'/scors_tresholds_{sig}.png')
+            cosine_distances_test = cc.calculate_cosine_distances(embeddings_full, test_pairs_q)
+            cosine_distances_test_no_q = cc.calculate_cosine_distances(embeddings_full, test_pairs_no_q)
             
-        # cc.plot_scors(models_names, accuracies_b_per_ss, save_file_path+f'/scors_ps.png')
-        
-        b_a_t = []
-        # define the start, end, and step values
-        start = 0.3
-        end = 0.8
-        step = 0.1
-        thresholds = [round(i * step + start, 2) for i in range(int((end - start) / step) + 1)]
-        for t_ind, threshold in enumerate(thresholds):
-            mc_p, accuracies_mc, reports_mc, conf_matrices_mc, _, bc_predictions, accuracies_b, reports_b, conf_matrices_b = cc.evaluate_classification(cosine_distances, pairs, threshold)
+            u.write_json(save_file_path + f'/val/120/cos_sim_val_q.json', cosine_distances)
+            u.write_json(save_file_path + f'/val/120/cos_sim_val_no_q.json', cosine_distances_no_q)
             
-            cc.plot_scors(models_names, reports_mc, save_file_path+f'/scors_mc.png')
+            u.write_json(save_file_path + f'/test/15000/cos_sim_test_q.json', cosine_distances_test)
+            u.write_json(save_file_path + f'/test/15000/cos_sim_tesr_no_q.json', cosine_distances_test_no_q)
             
-            # data_eval = {
-            # 'multiclass pred': mc_p,
-            # 'm_acc': accuracies_mc,
-            # 'report_m': reports_mc,
-            # 'binary pred': bc_predictions,
-            # 'b_acc': accuracies_b,
-            # 'report_b': reports_b
-            # # 'con_m': [list(a) for a in conf_matrices_mc[0]],
-            # # 'con_b': [list(a) for a in conf_matrices_b[0]],
-            # }
-            
-            # data_eval = {'threshold': threshold,
-            # 'binary pred': bc_predictions,
-            # 'b_acc': accuracies_b,
-            # 'report_b': reports_b
-            # }
-            
-            # file_path = f'/data_eval_{threshold}.json'
-            # # write the dictionary to a JSON file
-            # with open(save_file_path + file_path, 'w') as f:
-            #     json.dump(data_eval, f)
-                
-            # cc.calculate_statistics(cosine_distances, pairs, embeddings_full, save_file_path+'/stats.csv')
-            # cc.plot_scors(reports_mc, models_names, accuracies_b, accuracies_mc, save_file_path+f'/scors_{threshold}.png')
-            
-            # for ii in range(len(models_names)):
-            #     print(f"{models_names[ii]}")
-            #     print(f"\n binary Accuracy: {accuracies_b[ii]}")
-            #     print(f"\n binary Confusion Matrix:\n{conf_matrices_b[ii]}")
-            #     print(f"\n binary Classification Report for:\n{reports_b[ii]}")
-                
-            #     print(f"\n Multiclass Accuracy: {accuracies_mc[ii]}")
-            #     print(f"\n Multiclass Confusion Matrix:\n{conf_matrices_mc[ii]}")
-            #     print(f"\n Multiclass Classification Report for:\n{reports_mc[ii]}")
-                
-            #     cc.plot_combined(conf_matrices_b[ii], reports_b[ii], 
-            #                      models_names[ii], save_file_path+f'/{models_names[ii]}_cosine_binary_plot.png')
-            balanced_t.append(accuracies_b)
-        # cc.plot_b_scors(balanced_t, accuracies_b_per_ss_, accuracies_b_per_ss, thresholds, models_names, save_file_path+f'/scors_nbw_4_5_.png')
-            
+        else:
+            cosine_distances = u.read_json(save_file_path + f'/val/120/cos_sim_val_q.json')
+            cosine_distances_no_q = u.read_json(save_file_path + f'/val/120/cos_sim_val_no_q.json')
     
+            cosine_distances_test = u.read_json(save_file_path + f'/test/15000/cos_sim_test_q.json')
+            cosine_distances_test_no_q = u.read_json(save_file_path + f'/test/15000/cos_sim_tesr_no_q.json')
+
+        make_mc_max_plot = False
+        if make_mc_max_plot:
+            mc_p, balanced_accuracy_mc, accuracies_mc, reports_mc, conf_matrices_mc = cc.evaluate_classification_multiclass_closet_max([lst[:4] + [lst[5], lst[4]] for lst in cosine_distances_test], test_pairs_q)            
+            cc.plot_scors(models_names, reports_mc, balanced_accuracy_mc, 0, save_file_path+f'/test/15000/scors_multic_max_5__________fix_________________.png')
+        
+        gen_treshold = False
+        if gen_treshold:
+            
+            num_thresholds = 500
+            balance_acc_list, err_list, acc_list, report_list, f1_list_list, recall_list_list, precision_list_list, balanced_t = [[] for _ in range(8)]
+            thresholds = np.linspace(min(cosine_distances), max(cosine_distances), num=num_thresholds)
+            
+            for _, threshold in enumerate(thresholds):
+                balanc_accuracies_b, accuracies_b, reports_b, conf_matrices_b, eer_values = cc.evaluate_classification_binary_closet(cosine_distances, pairs_q, threshold)            
+            
+                precision_list = []
+                recall_list = []
+                f1_list = []
+                
+                for report in reports_b:
+                    macro_avg = report['weighted avg']
+                    precision = macro_avg['precision']
+                    f1_score = macro_avg['f1-score']
+                    recall = macro_avg['recall']
+                    
+                    precision_list.append(precision)
+                    recall_list.append(recall)
+                    f1_list.append(f1_score)
+                
+                err_list.append(eer_values)
+                f1_list_list.append(f1_list)
+                acc_list.append(accuracies_b)
+                report_list.append(reports_b)
+                recall_list_list.append(recall_list)
+                balance_acc_list.append(balanc_accuracies_b)
+                precision_list_list.append(precision_list)
+           
+                
+                save_dic = False
+                if save_dic:
+                    data_eval = {
+                        'multiclass pred': mc_p,
+                        'm_acc': accuracies_mc,
+                        'report_m': reports_mc,
+                        'binary pred': bc_predictions,
+                        'b_acc': accuracies_b,
+                        'report_b': reports_b
+                        # 'con_m': [list(a) for a in conf_matrices_mc[0]],
+                        # 'con_b': [list(a) for a in conf_matrices_b[0]],
+                        }
+                        
+                    data_eval = {'threshold': threshold,
+                    'binary pred': bc_predictions,
+                    'b_acc': accuracies_b,
+                    'report_b': reports_b
+                    }
+                    
+                    file_path = f'/data_eval_{threshold}.json'
+                    # write the dictionary to a JSON file
+                    with open(save_file_path + file_path, 'w') as f:
+                        json.dump(data_eval, f)
+                        
+                    cc.calculate_statistics(cosine_distances, pairs_q, embeddings_full, save_file_path+'/stats.csv')
+                    cc.plot_scors(models_names, reports_b, save_file_path+f'/__scors_{threshold}.png')
+                    
+                    for ii in range(len(models_names)):
+                        print(f"{models_names[ii]}")
+                        print(f"\n binary Accuracy: {accuracies_b[ii]}")
+                        print(f"\n binary Confusion Matrix:\n{conf_matrices_b[ii]}")
+                        print(f"\n binary Classification Report for:\n{reports_b[ii]}")
+                        
+                        print(f"\n Multiclass Accuracy: {accuracies_mc[ii]}")
+                        print(f"\n Multiclass Confusion Matrix:\n{conf_matrices_mc[ii]}")
+                        print(f"\n Multiclass Classification Report for:\n{reports_mc[ii]}")
+                        
+                        cc.plot_combined(conf_matrices_b[ii], reports_b[ii], models_names[ii], save_file_path+f'/{models_names[ii]}_cosine_binary_plot.png')
+                    balanced_t.append(accuracies_b)
+                    cc.plot_scors(models_names, reports_b, save_file_path+f'/__scors_{threshold}.png')
+            
+            best_indices_acc = [np.argmax([inner_list[i] for inner_list in acc_list]) for i in range(len(acc_list[0]))]
+            best_indices_eer = [np.argmin([inner_list[i] for inner_list in err_list]) for i in range(len(err_list[0]))]
+            best_indices_bala_acc = [np.argmax([inner_list[i] for inner_list in balance_acc_list]) for i in range(len(balance_acc_list[0]))]
+            best_indices_pre = [np.argmax([inner_list[i] for inner_list in precision_list_list]) for i in range(len(precision_list_list[0]))]
+            
+            thresholds_best_acc = [thresholds[best_indices_acc[i]][i] for i in range(len(best_indices_acc))]
+            thresholds_best_balanc_acc = [thresholds[best_indices_bala_acc[i]][i] for i in range(len(best_indices_bala_acc))]
+            thresholds_best_eer = [thresholds[best_indices_eer[i]][i] for i in range(len(best_indices_eer))]
+            thresholds_best_pre = [thresholds[best_indices_pre[i]][i] for i in range(len(best_indices_pre))]
+            thresholds_list = [thresholds_best_balanc_acc, thresholds_best_acc, thresholds_best_eer, thresholds_best_pre]
+            
+            bala_acc_best_list = [acc_list[best_indices_bala_acc[i]][i] for i in range(len(best_indices_bala_acc))]
+            acc_best_list = [acc_list[best_indices_acc[i]][i] for i in range(len(best_indices_acc))]
+            eer_best_list = [err_list[best_indices_eer[i]][i] for i in range(len(best_indices_eer))]
+            prec_best_list = [precision_list_list[best_indices_pre[i]][i] for i in range(len(best_indices_pre))]
+            
+            balanced_accuracies_b_TEST, accuracies_b_TEST, reports_b_TEST, conf_matrices_b_TEST, eer_values_TEST = cc.evaluate_classification_binary_closet(cosine_distances_test, test_pairs_q, thresholds_list[0])
+            
+            cc.plot_b_scors(reports_b_TEST, eer_values, balanced_accuracies_b_TEST, thresholds_list, models_names, save_file_path+f'/balance_acc_b_closet_test________fix.png', 'balance_acc')
+            
+        make_ss_tresh = True
+        if make_ss_tresh:
+            
+            save_file1 = save_file_path + f'/val/120/ss_personal_param_q_val.json'
+            save_file2 = save_file_path + f'/val/120/ss_personal_param_no_q_val.json'
+            
+            save_file3 = save_file_path + f'/test/15000/ss_personal_param_q_test.json'
+            save_file4 = save_file_path + f'/test/15000/ss_personal_param_no_q_test.json'
+            create_ = False
+            if create_:
+                perso_ss_param_q_val = u.make_perso_ss_param(cosine_distances, save_file1)                
+                perso_ss_param_no_q_val = u.make_perso_ss_param_no_q(cosine_distances_no_q, save_file2)
+                
+                perso_ss_param_q_test = u.make_perso_ss_param(cosine_distances_test, save_file3)                
+                perso_ss_param_no_q_test = u.make_perso_ss_param_no_q(cosine_distances_test_no_q, save_file4)
+                
+            else:
+                perso_ss_param_q_val = u.read_json(save_file1)
+                perso_ss_param_no_q_val = u.read_json(save_file2)
+                
+                perso_ss_param_q_test = u.read_json(save_file3)
+                perso_ss_param_no_q_test = u.read_json(save_file4)
+            
+            tresh_sig_const = np.linspace(0, 10, num=1000)
+            tresh_alfa_const = np.linspace(0, 10, num=1000)
+            
+            err_list_, acc_list_ = [], []
+            acc_list_5_mss, acc_list_5_mad, acc_list_4_mss, acc_list_4_mad, acc_list_10_mss, acc_list_10_mass_ = [[] for _ in range(6)]
+            err_list_5_mss, err_list_5_mad, err_list_4_mss, err_list_4_mad, err_list_10_mss, err_list_10_mass_ = [[] for _ in range(6)]
+            all_tresh_ = []
+            ss_true_labels_val = [pair[2][-2:] if pair[2][-2:].isdigit() else pair[2] for pair in pairs_q]
+            binary_ground_truth_val = [pair[0] for pair in pairs_q]
+            
+            for index_const, (sig, alf) in enumerate(zip(tresh_sig_const, tresh_alfa_const)):
+                ss_tresholds_all, ss_tresholds_all_0, ss_tresholds_no_q_max_sig_std, ss_tresholds_no_q_mean_sig_std, ss_tresholds_all_max_alfa_diff, ss_tresholds_all_0_max_alfa_diff = [[] for _ in range(6)]
+                for i in range(len(models_names)):
+                    
+                    ss_tresholds_all.append([mad - sig*std for mad, std in zip(perso_ss_param_q_val['max'][i], perso_ss_param_q_val['std_all'][i])])                    
+                    ss_tresholds_all_max_alfa_diff.append([p95 - alf*diff_ for p95, diff_ in zip(perso_ss_param_q_val['max'][i], perso_ss_param_q_val['f_s_dif'][i])])
+
+                    ss_tresholds_all_0.append([mean + sig*std for mean, std in zip(perso_ss_param_q_val['max0'][i], perso_ss_param_q_val['std_0'][i])])
+                    ss_tresholds_all_0_max_alfa_diff.append([max_ + alf*diff_ for max_, diff_ in zip(perso_ss_param_q_val['max0'][i], perso_ss_param_q_val['f_s_dif'][i])])
+                    
+                    ss_tresholds_no_q_mean_sig_std.append([value for value in [mean[0] + sig*std[0] for mean, std in zip(perso_ss_param_no_q_val['max'][i], perso_ss_param_no_q_val['std_all'][i])] for _ in range(query_c_num[1])])
+                    ss_tresholds_no_q_max_sig_std.append([max_[0] + sig*std for max_, std in zip([value for val in perso_ss_param_no_q_val['max'][i] for value in [val] * query_c_num[1]], perso_ss_param_q_val['f_s_dif'][i])])
+
+                bc_p_mss, accuracies_b_mss, reports_b_mss, conf_matrices_b_mss, eer_mss, bala_acc_mss = cc.evaluate_classification_per_ss_B(cosine_distances, pairs_q, ss_tresholds_all, val_support_set_num[0], k_way[0], True, query_c_num[1], query_c_size[0], binary_ground_truth_val)
+                bc_p_MAD, accuracies_b_mad, reports_b_mad, _, eer_mad, bala_acc_mad = cc.evaluate_classification_per_ss_B(cosine_distances, pairs_q, ss_tresholds_all_max_alfa_diff, val_support_set_num[0], k_way[0], True, query_c_num[1], query_c_size[0], binary_ground_truth_val)
+
+                bc_p_0_mss, accuracies_b_0_mss, reports_b_0_mss, _, eer_0_mss, bala_acc_0_mss = cc.evaluate_classification_per_ss_B(cosine_distances, pairs_q, ss_tresholds_all_0, val_support_set_num[0], k_way[0], True, query_c_num[1], query_c_size[0], binary_ground_truth_val)
+                bc_p_0_MAD, accuracies_b_0_mad, reports_b_0_mad, _, eer_0_mad, bala_acc_0_mad = cc.evaluate_classification_per_ss_B(cosine_distances, pairs_q, ss_tresholds_all_0_max_alfa_diff, val_support_set_num[0], k_way[0], True, query_c_num[1], query_c_size[0], binary_ground_truth_val)
+                
+                bc_p_ss, accuracies_b_per_ss, reports_b_ss, _, eer_ss, bala_acc_ss = cc.evaluate_classification_per_ss_B(cosine_distances, pairs_q, ss_tresholds_no_q_mean_sig_std, val_support_set_num[0], k_way[0], True, query_c_num[1], query_c_size[0], binary_ground_truth_val)
+                bc_p_0_ss, accuracies_b_per_ss_max, reports_b_ss_max_, _, eer_ss_, bala_acc_ss_max = cc.evaluate_classification_per_ss_B(cosine_distances, pairs_q, ss_tresholds_no_q_max_sig_std, val_support_set_num[0], k_way[0], True, query_c_num[1], query_c_size[0], binary_ground_truth_val)
+                
+                err_list_.append([eer_mss, eer_0_mss, eer_mad, eer_0_mad, eer_ss, eer_ss_])
+                acc_list_.append([accuracies_b_mss, accuracies_b_mad, accuracies_b_0_mss, accuracies_b_0_mad, accuracies_b_per_ss, accuracies_b_per_ss_max])
+                
+                acc_list_5_mss.append(bala_acc_mss)
+                acc_list_5_mad.append(bala_acc_mad)
+                acc_list_4_mss.append(bala_acc_0_mss)
+                acc_list_4_mad.append(bala_acc_0_mad)
+                acc_list_10_mss.append(bala_acc_ss)
+                acc_list_10_mass_.append(bala_acc_ss_max)
+                
+                err_list_5_mss.append(eer_mss)
+                err_list_5_mad.append(eer_mad)
+                err_list_4_mss.append(eer_0_mss)
+                err_list_4_mad.append(eer_0_mad)
+                err_list_10_mss.append(eer_ss)
+                err_list_10_mass_.append(eer_ss_)
+                
+                all_tresh_.append([sig, alf])
+                
+            
+            best_indices_acc_mss = [[np.argmax([inner_list[i] for inner_list in acc_list_5_mss]), np.max([inner_list[i] for inner_list in acc_list_5_mss])] for i in range(len(acc_list_5_mss[0]))]
+            best_indices_acc_mad = [[np.argmax([inner_list[i] for inner_list in acc_list_5_mad]), np.max([inner_list[i] for inner_list in acc_list_5_mad])] for i in range(len(acc_list_5_mad[0]))]
+            
+            best_indices_acc_0_mss = [[np.argmax([inner_list[i] for inner_list in acc_list_4_mss]), np.max([inner_list[i] for inner_list in acc_list_4_mss])] for i in range(len(acc_list_4_mss[0]))]
+            best_indices_acc_0_mad = [[np.argmax([inner_list[i] for inner_list in acc_list_4_mad]), np.max([inner_list[i] for inner_list in acc_list_4_mad])] for i in range(len(acc_list_4_mad[0]))]
+            
+            best_indices_acc_per_ss = [[np.argmax([inner_list[i] for inner_list in acc_list_10_mss]), np.max([inner_list[i] for inner_list in acc_list_10_mss])] for i in range(len(acc_list_10_mss[0]))]
+            best_indices_acc_ss_max = [[np.argmax([inner_list[i] for inner_list in acc_list_10_mass_]), np.max([inner_list[i] for inner_list in acc_list_10_mass_])] for i in range(len(acc_list_10_mass_[0]))]
+
+            best_indices_err_mss = [[np.argmin([inner_list[i] for inner_list in err_list_5_mss]), np.min([inner_list[i] for inner_list in err_list_5_mss])] for i in range(len(err_list_5_mss[0]))]
+            best_indices_err_mad = [[np.argmin([inner_list[i] for inner_list in err_list_5_mad]), np.min([inner_list[i] for inner_list in err_list_5_mad])] for i in range(len(err_list_5_mad[0]))]
+            
+            best_indices_err_0_mss = [[np.argmin([inner_list[i] for inner_list in err_list_4_mss]), np.min([inner_list[i] for inner_list in err_list_4_mss])] for i in range(len(err_list_4_mss[0]))]
+            best_indices_err_0_mad = [[np.argmin([inner_list[i] for inner_list in err_list_4_mad]), np.min([inner_list[i] for inner_list in err_list_4_mad])] for i in range(len(err_list_4_mad[0]))]
+            
+            best_indices_err_per_ss = [[np.argmin([inner_list[i] for inner_list in err_list_10_mss]), np.min([inner_list[i] for inner_list in err_list_10_mss])] for i in range(len(err_list_10_mss[0]))]
+            best_indices_err_ss_max = [[np.argmin([inner_list[i] for inner_list in err_list_10_mass_]), np.min([inner_list[i] for inner_list in err_list_10_mass_])] for i in range(len(err_list_10_mass_[0]))]
+
+
+            sig_5_eer = [all_tresh_[best_indices_err_mss[i][0]][0] for i in range(len(best_indices_err_mss))]
+            alfa_5_eer = [all_tresh_[best_indices_err_mad[i][0]][1] for i in range(len(best_indices_err_mad))]
+            
+            sig_4_eer = [all_tresh_[best_indices_err_0_mss[i][0]][0] for i in range(len(best_indices_err_0_mss))]
+            alfa_4_eer = [all_tresh_[best_indices_err_0_mad[i][0]][1] for i in range(len(best_indices_err_0_mad))]
+            
+            sig_10_eer = [all_tresh_[best_indices_err_per_ss[i][0]][0] for i in range(len(best_indices_err_per_ss))]
+            sig_10__eer= [all_tresh_[best_indices_acc_ss_max[i][0]][0] for i in range(len(best_indices_err_ss_max))]
+            
+            sig_alfa_eer = [sig_5_eer, alfa_5_eer, sig_4_eer, alfa_4_eer, sig_10_eer, sig_10__eer]
+            
+            sig_5 = [all_tresh_[best_indices_acc_mss[i][0]][0] for i in range(len(best_indices_acc_mss))]
+            alfa_5 = [all_tresh_[best_indices_acc_mad[i][0]][1] for i in range(len(best_indices_acc_mad))]
+            
+            sig_4 = [all_tresh_[best_indices_acc_0_mss[i][0]][0] for i in range(len(best_indices_acc_0_mss))]
+            alfa_4 = [all_tresh_[best_indices_acc_0_mad[i][0]][1] for i in range(len(best_indices_acc_0_mad))]
+            
+            sig_10 = [all_tresh_[best_indices_acc_per_ss[i][0]][0] for i in range(len(best_indices_acc_per_ss))]
+            sig_10_ = [all_tresh_[best_indices_acc_ss_max[i][0]][0] for i in range(len(best_indices_acc_ss_max))]
+            
+            sig_alfa_acc = [sig_5, alfa_5, sig_4, alfa_4, sig_10, sig_10_]
+            sig_alfa_list = [sig_alfa_acc, sig_alfa_eer]
+            
+            ss_true_labels_test = [pair[2][-2:] if pair[2][-2:].isdigit() else pair[2] for pair in test_pairs_q]
+            binary_ground_truth_test = [pair[0] for pair in test_pairs_q]
+            for  ac_eer_i, sig_alfa in enumerate(sig_alfa_list):
+                
+                ss_tresholds_all_test, ss_tresholds_all_0_test, ss_tresholds_no_q_max_sig_std_test, ss_tresholds_no_q_mean_sig_std_test, ss_tresholds_all_max_alfa_diff_test, ss_tresholds_all_0_max_alfa_diff_test = [[] for _ in range(6)]
+                for i in range(len(models_names)):
+                    
+                    ss_tresholds_all_test.append([mad + sig_alfa[0][i]*std for mad, std in zip(perso_ss_param_q_test['mean_all'][i], perso_ss_param_q_test['std_all'][i])])                    
+                    ss_tresholds_all_max_alfa_diff_test.append([p95 - sig_alfa[1][i]*diff_ for p95, diff_ in zip(perso_ss_param_q_test['max'][i], perso_ss_param_q_test['f_s_dif'][i])])
+                    
+                    ss_tresholds_all_0_test.append([mean + sig_alfa[2][i]*std for mean, std in zip(perso_ss_param_q_test['mean_0'][i], perso_ss_param_q_test['std_0'][i])])
+                    ss_tresholds_all_0_max_alfa_diff_test.append([max_ + sig_alfa[3][i]*diff_ for max_, diff_ in zip(perso_ss_param_q_test['max0'][i], perso_ss_param_q_test['f_s_dif'][i])])
+                    
+                    ss_tresholds_no_q_mean_sig_std_test.append([mean[0] + sig_alfa[4][i]*std[0] for mean, std in zip(perso_ss_param_no_q_test['mean_all'][i], perso_ss_param_no_q_test['std_all'][i])])
+                    ss_tresholds_no_q_max_sig_std_test.append([max_[0] + sig_alfa[5][i]*std for max_, std in zip(perso_ss_param_no_q_test['max'][i], perso_ss_param_q_test['f_s_dif'][i])])
+
+                bc_p_mss, accuracies_b_test5_mss, reports_b_mss, conf_matrices_b_mss, eer_test5_mss, BA_test5_mss = cc.evaluate_classification_per_ss_B(cosine_distances_test, test_pairs_q, ss_tresholds_all_test, test_support_set_num[0], k_way[0], True, query_c_num[0], query_c_size[0], binary_ground_truth_test)
+                bc_p_MAD, accuracies_b_test5_mad, reports_b_mad, conf_matrices_b_mss_, eer_test5_mad, BA_test5_mad = cc.evaluate_classification_per_ss_B(cosine_distances_test, test_pairs_q, ss_tresholds_all_max_alfa_diff_test, test_support_set_num[0], k_way[0], True, query_c_num[0], query_c_size[0], binary_ground_truth_test)
+                
+                bc_p_0_mss, accuracies_b_test4_0_mss, reports_b_0_mss, conf_matrices_b_mss__, eer_test4_0_mss, BA_test4_0_mss = cc.evaluate_classification_per_ss_B(cosine_distances_test, test_pairs_q, ss_tresholds_all_0_test, test_support_set_num[0], k_way[0], True, query_c_num[0], query_c_size[0], binary_ground_truth_test)
+                bc_p_0_MAD, accuracies_b_test4_0_mad, reports_b_0_mad, conf_matrices_b_mss____, eer_test4_0_mad, BA_test4_0_mad = cc.evaluate_classification_per_ss_B(cosine_distances_test, test_pairs_q, ss_tresholds_all_0_max_alfa_diff_test, test_support_set_num[0], k_way[0], True, query_c_num[0], query_c_size[0], binary_ground_truth_test)
+                
+                bc_p_ss, accuracies_b_test10, reports_b_ss, conf_matrices_b_mss__________________, eer_test10_ss, BA_test10_ss = cc.evaluate_classification_per_ss_B(cosine_distances_test, test_pairs_q, ss_tresholds_no_q_mean_sig_std_test, test_support_set_num[0], k_way[0], True, query_c_num[0], query_c_size[0], binary_ground_truth_test)
+                bc_p_0_ss, accuracies_b_test10_max, reports_b_ss_max_, conf_matrices_b_mss_____________________________, eer_test10_ss_, BA_test10_ss_ = cc.evaluate_classification_per_ss_B(cosine_distances_test, test_pairs_q, ss_tresholds_no_q_max_sig_std_test, test_support_set_num[0], k_way[0], True, query_c_num[0], query_c_size[0], binary_ground_truth_test)
+            
+                cc.plot_ss_scors([BA_test5_mss, BA_test5_mad], 
+                                 [BA_test4_0_mss, BA_test4_0_mad], 
+                                 [BA_test10_ss, BA_test10_ss_], sig_alfa, models_names, save_file_path+f'/{ac_eer_i}____fix________________ori___________scors_tresholds_test.png')
+
+    INFER_openset = False
+    if INFER_openset:
+        
+        save_file_path = CODE_REPO_PATH + f'/data/FSL_SETS/5w_1s_shot/'
+        
+        test_pairs_openset = u.read_json(save_file_path + f'/test/15000/75000_test_15000_1C_1PC_task_sets_openset.json')
+        test_pairs_no_q = u.read_json(save_file_path + f'/test/15000/150000_test_15000_ss_task_sets.json')
+        
+        pairs_openset = u.read_json(save_file_path + f'/val/120/3000_val_120_5C_1PC_task_sets_openset.json')        
+        
+        pairs_no_q = u.read_json(save_file_path + f'/val/120/1200_val_120_ss_task_sets.json')
+
+        take_or_create = True
+        if take_or_create:
+            cosine_distances_openset = u.read_json(save_file_path + f'/val/120/cosin_openset_val.json')
+            cosine_distances_no_q = u.read_json(save_file_path + f'/val/120/cos_sim_val_no_q.json')
+            
+            test_cosine_distances_openset = u.read_json(save_file_path + f'/test/15000/cosin_openset_test.json')        
+            cosine_distances_test_no_q = u.read_json(save_file_path + f'/test/15000/cos_sim_tesr_no_q.json')
+        else:    
+            
+            cosine_distances_openset = cc.calculate_cosine_distances(embeddings_full, pairs_openset)
+            u.write_json(save_file_path + f'/val/120/cosin_openset_val.json', cosine_distances_openset)
+            
+            test_cosine_distances_openset = cc.calculate_cosine_distances(embeddings_full, test_pairs_openset)
+            u.write_json(save_file_path + f'/test/15000/cosin_openset_test.json', test_cosine_distances_openset)
+            
+            cosine_distances_no_q = cc.calculate_cosine_distances(embeddings_full, pairs_no_q)
+            u.write_json(save_file_path + f'/val/120/cos_sim_val_no_q.json', cosine_distances_no_q)
+            
+            cosine_distances_test_no_q = cc.calculate_cosine_distances(embeddings_full, test_pairs_no_q)
+            u.write_json(save_file_path + f'/test/15000/cos_sim_tesr_no_q.json', cosine_distances_test_no_q)
+                
+        save_file1 = save_file_path + f'/val/120/ss_personal_param_q_openset_val.json'
+        save_file2 = save_file_path + f'/val/120/ss_personal_param_no_q_val.json'
+        
+        save_file3 = save_file_path + f'/test/15000/ss_personal_param_q_openset_test.json'
+        save_file4 = save_file_path + f'/test/15000/ss_personal_param_no_q_test.json'
+        create_ = False
+        if create_:
+            perso_ss_param_q_val = u.make_perso_ss_param(cosine_distances_openset, save_file1)                
+            perso_ss_param_no_q_val = u.make_perso_ss_param_no_q(cosine_distances_no_q, save_file2)
+            
+            perso_ss_param_q_test = u.make_perso_ss_param(test_cosine_distances_openset, save_file3)                
+            perso_ss_param_no_q_test = u.make_perso_ss_param_no_q(cosine_distances_test_no_q, save_file4)
+            
+        else:            
+            perso_ss_param_q_val = u.read_json(save_file1)        
+            perso_ss_param_no_q_val = u.read_json(save_file2)            
+        
+            perso_ss_param_q_test = u.read_json(save_file3)
+            perso_ss_param_no_q_test = u.read_json(save_file4)            
+            
+        open_set_fix_tresh = False
+        if open_set_fix_tresh:
+            
+            thresholds = cc.calculate_fix_threshold_openset(cosine_distances_openset, [pair[0] for pair in pairs_openset])
+
+            # Perform multiclass & binary  classification
+            ss_true_labels = [pair[2][-2:] if pair[2][-2:].isdigit() else pair[2] for pair in test_pairs_openset]
+            multiclass_predictions, binary_predictions = cc.multiclass_binary_openset_classification(test_cosine_distances_openset, thresholds, ss_true_labels)
+            multiclass_predictions_from_start = []
+            for i in range(len(multiclass_predictions)):
+                multiclass_predictions_from_start.append([id2label_map[int(cla[0])] for cla in multiclass_predictions[i][-1]])
+            
+            binary_ground_truth = [pair[0] for pair in test_pairs_openset]
+            multi_ground_truth = [pair[1][-2:] if pair[1][-2:].isdigit() else pair[1] for pair in test_pairs_openset][::5]
+            multi_ground_truth_from_start = [cla if cla == 'unknown' else id2label_map[int(cla)] for cla in multi_ground_truth]
+            
+            accuracies_b, reports_b, conf_matrices_b, binary_bala_acc, accuracies_m, reports_m, conf_matrices_m, mc_bala_acc, class_labels = cc.evaluate_classification_openset(multiclass_predictions_from_start, binary_predictions, multi_ground_truth_from_start, binary_ground_truth)
+            
+            tresh_fin = [tr[0] for tr in thresholds]
+            cc.plot_scors(models_names, reports_m, mc_bala_acc, tresh_fin, save_file_path+f'/bala_acc________________scors_mc_OPENSET__.png')
+            cc.plot_confusion_matrices(conf_matrices_m, save_file_path, class_labels, single_plot=True)
+        
+        open_set_personal_tresh = False
+        if open_set_personal_tresh:
+            
+            ss_true_labels_val = [pair[2][-2:] if pair[2][-2:].isdigit() else pair[2] for pair in pairs_openset]
+            binary_ground_truth_val = [pair[0] for pair in pairs_openset]
+            multi_ground_truth_num_val = [pair[1][-2:] if pair[1][-2:].isdigit() else pair[1] for pair in pairs_openset][::5]
+            multi_ground_truth_cat_val = [cla if cla == 'unknown' else id2label_map[int(cla)] for cla in multi_ground_truth_num_val]
+            class_labels_val = list(set(multi_ground_truth_cat_val))
+            class_labels_val.remove('unknown')
+            class_labels_val.append('unknown')
+            
+            thresholds_param = cc.calculate_pers_threshold_openset(cosine_distances_openset, cosine_distances_no_q, [pairs_openset, pairs_no_q], [perso_ss_param_no_q_val, perso_ss_param_q_val], models_names, val_support_set_num, k_way, query_c_num, query_c_size, ss_true_labels_val, id2label_map, binary_ground_truth_val, multi_ground_truth_cat_val, class_labels_val)
+                    
+            binary_ground_truth = [pair[0] for pair in test_pairs_openset]  
+            multi_ground_truth_num = [pair[1][-2:] if pair[1][-2:].isdigit() else pair[1] for pair in test_pairs_openset][::5]
+            multi_ground_truth_cat = [cla if cla == 'unknown' else id2label_map[int(cla)] for cla in multi_ground_truth_num]
+            class_labels = list(set(multi_ground_truth_cat))
+            class_labels.remove('unknown')
+            class_labels.append('unknown')
+            ss_true_labels = [pair[2][-2:] if pair[2][-2:].isdigit() else pair[2] for pair in test_pairs_openset]
+            
+            for  ac_eer_i, sig_alfa in enumerate(thresholds_param):
+                
+                ss_tresholds_all_test, ss_tresholds_all_0_test, ss_tresholds_no_q_max_sig_std_test, ss_tresholds_no_q_mean_sig_std_test, ss_tresholds_all_max_alfa_diff_test, ss_tresholds_all_0_max_alfa_diff_test = [[] for _ in range(6)]
+                for i in range(len(models_names)):
+                    
+                    ss_tresholds_all_test.append([mean + sig_alfa[0][i]*std for mean, std in zip(perso_ss_param_q_test['MAD'][i], perso_ss_param_q_test['std_all'][i])])                    
+                    ss_tresholds_all_max_alfa_diff_test.append([max_ - sig_alfa[1][i]*diff_ for max_, diff_ in zip(perso_ss_param_q_test['max'][i], perso_ss_param_q_test['f_s_dif'][i])])
+                    
+                    ss_tresholds_all_0_test.append([mean + sig_alfa[2][i]*std for mean, std in zip(perso_ss_param_q_test['MAD_0'][i], perso_ss_param_q_test['std_0'][i])])
+                    ss_tresholds_all_0_max_alfa_diff_test.append([max_ + sig_alfa[3][i]*diff_ for max_, diff_ in zip(perso_ss_param_q_test['max0'][i], perso_ss_param_q_test['f_s_dif'][i])])
+                    
+                    ss_tresholds_no_q_mean_sig_std_test.append([mean[0] + sig_alfa[4][i]*std[0] for mean, std in zip(perso_ss_param_no_q_test['MAD'][i], perso_ss_param_no_q_test['std_all'][i])])
+                    ss_tresholds_no_q_max_sig_std_test.append([max_[0] + sig_alfa[5][i]*std for max_, std in zip(perso_ss_param_no_q_test['max'][i], perso_ss_param_q_test['f_s_dif'][i])])
+                
+                multiclass_prediction_5_mss, binary_predictions_5_mss, incd_all_5_mss = cc.classification_per_ss_mc(test_cosine_distances_openset, test_pairs_openset, ss_tresholds_all_test, test_support_set_num[0], k_way[0], query_c_num[0], ss_true_labels, id2label_map, binary_ground_truth, multi_ground_truth_cat, class_labels)
+                multiclass_prediction_5_mad, binary_predictions_5_mad, incd_all_5_mad = cc.classification_per_ss_mc(test_cosine_distances_openset, test_pairs_openset, ss_tresholds_all_max_alfa_diff_test, test_support_set_num[0], k_way[0], query_c_num[0], ss_true_labels, id2label_map, binary_ground_truth, multi_ground_truth_cat, class_labels)
+                
+                multiclass_prediction_4_mss, binary_predictions_4_mss, incd_all_4_mss = cc.classification_per_ss_mc(test_cosine_distances_openset, test_pairs_openset, ss_tresholds_all_0_test, test_support_set_num[0], k_way[0], query_c_num[0], ss_true_labels, id2label_map, binary_ground_truth, multi_ground_truth_cat, class_labels)
+                multiclass_prediction_4_mad, binary_predictions_4_mad, incd_all_4_mad = cc.classification_per_ss_mc(test_cosine_distances_openset, test_pairs_openset, ss_tresholds_all_0_max_alfa_diff_test, test_support_set_num[0], k_way[0], query_c_num[0], ss_true_labels, id2label_map, binary_ground_truth, multi_ground_truth_cat, class_labels)
+                
+                multiclass_prediction_10_mss, binary_predictions_10_mss, incd_all_10_mss = cc.classification_per_ss_mc(test_cosine_distances_openset, test_pairs_openset, ss_tresholds_no_q_mean_sig_std_test, test_support_set_num[0], k_way[0], query_c_num[0], ss_true_labels, id2label_map, binary_ground_truth, multi_ground_truth_cat, class_labels)
+                multiclass_prediction_10_maxss, binary_predictions_10_maxss, incd_all_10_maxss = cc.classification_per_ss_mc(test_cosine_distances_openset, test_pairs_openset, ss_tresholds_no_q_max_sig_std_test, test_support_set_num[0], k_way[0], query_c_num[0], ss_true_labels, id2label_map, binary_ground_truth, multi_ground_truth_cat, class_labels)
+        
+                cc.plot_ss_scors([[elem[-1] for elem in incd_all_5_mss], [elem[-1] for elem in incd_all_5_mad]], 
+                                [[elem[-1] for elem in incd_all_4_mss], [elem[-1] for elem in incd_all_4_mad]], 
+                                [[elem[-1] for elem in incd_all_10_mss], [elem[-1] for elem in incd_all_10_maxss]], 
+                                sig_alfa, models_names, save_file_path+f'/{ac_eer_i}_scors_mc_tresholds_openset_test_______________finall________________.png')
+                
+                # cc.plot_scors(models_names, incd_all_10_maxss, incd_all_10_maxss, save_file_path+f'/{ac_eer_i}_scors_mc_OPENSET______.png')
+                # cc.plot_confusion_matrices(conf_matrices_m, save_file_path, class_labels, single_plot=False)        
+        
+        open_set_personal_CAT_tresh = False
+        if open_set_personal_CAT_tresh:
+            
+            ss_true_labels_val = [pair[2][-2:] if pair[2][-2:].isdigit() else pair[2] for pair in pairs_openset]
+            binary_ground_truth_val = [pair[0] for pair in pairs_openset]
+            multi_ground_truth_num_val = [pair[1][-2:] if pair[1][-2:].isdigit() else pair[1] for pair in pairs_openset][::5]
+            multi_ground_truth_cat_val = [cla if cla == 'unknown' else id2label_map[int(cla)] for cla in multi_ground_truth_num_val]
+            class_labels_val = list(set(multi_ground_truth_cat_val))
+            class_labels_val.remove('unknown')
+            class_labels_val.append('unknown')
+            
+            sig_max, sig_mean, sig_median, ind_max = cc.calculate_pers_CAT_threshold_openset(cosine_distances_openset, cosine_distances_no_q, [pairs_openset, pairs_no_q], [perso_ss_param_no_q_val, perso_ss_param_q_val], models_names, val_support_set_num, k_way, query_c_num, query_c_size, ss_true_labels_val, id2label_map, binary_ground_truth_val, multi_ground_truth_cat_val, class_labels_val)
+                    
+            binary_ground_truth = [pair[0] for pair in test_pairs_openset]  
+            multi_ground_truth_num = [pair[1][-2:] if pair[1][-2:].isdigit() else pair[1] for pair in test_pairs_openset][::5]
+            multi_ground_truth_cat = [cla if cla == 'unknown' else id2label_map[int(cla)] for cla in multi_ground_truth_num]
+            class_labels = list(set(multi_ground_truth_cat))
+            class_labels.remove('unknown')
+            class_labels.append('unknown')
+            ss_true_labels = [pair[2][-2:] if pair[2][-2:].isdigit() else pair[2] for pair in test_pairs_openset]
+            
+            ss_tresholds_all_test, ss_tresholds_all_0_test, ss_tresholds_no_q_mean_sig_std_test = [[] for _ in range(3)]
+            for i in range(len(models_names)):
+                for cat_ind in range(1, k_way[0]+1):
+                    ss_tresholds_all_test.append([mean[cat_ind] + sig_max[i]*std[cat_ind] for  _, (mean, std) in enumerate(zip(perso_ss_param_no_q_test['mean_all'][i], perso_ss_param_no_q_test['std_all'][i]))])                    
+                    ss_tresholds_all_0_test.append([Max[cat_ind] + sig_mean[i]*std[cat_ind] for  _, (Max, std) in enumerate(zip(perso_ss_param_no_q_test['max'][i], perso_ss_param_no_q_test['std_all'][i]))])
+                    ss_tresholds_no_q_mean_sig_std_test.append([mad[cat_ind] + sig_median[i]*std[cat_ind] for  _, (mad, std) in enumerate(zip(perso_ss_param_no_q_test['MAD'][i], perso_ss_param_no_q_test['std_all'][i]))])
+            
+            multiclass_prediction_5_mss, binary_predictions_5_mss, incd_all_5_mss = cc.classification_per_ss_CAT_mc(test_cosine_distances_openset, test_pairs_openset, ss_tresholds_all_test, test_support_set_num[0], k_way[0], query_c_num[0], query_c_size[0], ss_true_labels, id2label_map, binary_ground_truth, multi_ground_truth_cat, class_labels)
+            multiclass_prediction_4_mss, binary_predictions_4_mss, incd_all_4_mss = cc.classification_per_ss_CAT_mc(test_cosine_distances_openset, test_pairs_openset, ss_tresholds_all_0_test, test_support_set_num[0], k_way[0], query_c_num[0], query_c_size[0], ss_true_labels, id2label_map, binary_ground_truth, multi_ground_truth_cat, class_labels)
+            multiclass_prediction_10_mss, binary_predictions_10_mss, incd_all_10_mss = cc.classification_per_ss_CAT_mc(test_cosine_distances_openset, test_pairs_openset, ss_tresholds_no_q_mean_sig_std_test, test_support_set_num[0], k_way[0], query_c_num[0], query_c_size[0], ss_true_labels, id2label_map, binary_ground_truth, multi_ground_truth_cat, class_labels)
+    
+            cc.plot_ss_scors([elem[-1] for elem in incd_all_5_mss], [elem[-1] for elem in incd_all_4_mss], [elem[-1] for elem in incd_all_10_mss], [sig_max, sig_mean, sig_median], models_names, save_file_path+f'/PER_CAT_______scors_mc_tresholds_openset_test.png')
+            # cc.plot_scors(models_names, incd_all_10_maxss, incd_all_10_maxss, save_file_path+f'/{ac_eer_i}_scors_mc_OPENSET______.png')
+            # cc.plot_confusion_matrices(conf_matrices_m, save_file_path, class_labels, single_plot=False)
+
     SIEAMISE = True
     epochs = 15
-    batch_size = 5
-    exp_dir = ["/home/almogk/FSL_TL_E_C/sieamis_ast_exp_"]
+    batch_size = 15
+    exp_dir = "/home/almogk/FSL_TL_E_C/sieamis_ast_exp_"
     
     if SIEAMISE:
-        # [1e-3, 1e-4, 1e-5, 1e-6]
         parser_param = {
             "n_class": [35], "model": ["ast"],
-            'fc': ['m'], 'imagenet_pretrain': [True],'audioset_pretrain': [False, True],
-            "dataset": ["esc50"], "exp_dir": exp_dir,
-            "lr": [1e-4], "optim": ["adam"], "batch_size": [batch_size],
+            'fc': ['maha'], 'imagenet_pretrain': [True],'audioset_pretrain': [False, True],
+            "dataset": ["esc50"], "exp_dir": [exp_dir],
+            "lr": [1e-5], "optim": ["adam"], "batch_size": [batch_size],
             "num_workers": [8], "n_epochs": [epochs], "lr_patience": [2],
             "n_print_steps": [1000], "save_model": [False], "freqm": [24],
             "timem": [96], "mixup": [0], "bal": [None], "fstride": [10],
@@ -935,9 +1371,9 @@ def main():
             }
         parser_param1 = {
             "n_class": [35], "model": ["ast"],
-            'fc': ['m'], 'imagenet_pretrain': [False],'audioset_pretrain': [False],
-            "dataset": ["esc50"], "exp_dir": exp_dir,
-            "lr": [1e-4], "optim": ["adam"], "batch_size": [batch_size],
+            'fc': ['maha'], 'imagenet_pretrain': [False],'audioset_pretrain': [False],
+            "dataset": ["esc50"], "exp_dir": [exp_dir],
+            "lr": [1e-5], "optim": ["adam"], "batch_size": [batch_size],
             "num_workers": [8], "n_epochs": [epochs], "lr_patience": [2],
             "n_print_steps": [1000], "save_model": [False], "freqm": [24],
             "timem": [96], "mixup": [0], "bal": [None], "fstride": [10],
@@ -950,17 +1386,21 @@ def main():
             }
 
         pairs_path = ['/home/almogk/FSL_TL_E_C/data/FSL_SETS/5w_1s_shot/train/5000/25000_train_5000__1C_1PC_task_sets.json',
+                  
                   '/home/almogk/FSL_TL_E_C/data/FSL_SETS/5w_1s_shot/test/15000/75000_test_15000__1C_1PC_task_sets.json',
+                  
                   '/home/almogk/FSL_TL_E_C/data/FSL_SETS/5w_1s_shot/val/120/3000_val_120__5C_1PC_task_sets.json']
+        
+        ft_model_dir_pattern = "/home/almogk/FSL_TL_E_C/ast_class_exp/{}/{}/models/best_audio_model.pth"
         
         checkpoint_path = u.load_pt_ft_models_checkpoint_path(ft_model_dir_pattern) 
         # checkpoint_path.extend([None])
         # checkpoint_path = [None]
         # models_names = ['scratch_rand_pos', 'PT_(ImagNet)', 'PT_(ImagNet_AudioSet)'] 
-        models_names = ['scratch_T(ESC_35)', 
+        models_names = ['scratch_T(ESC_35)',
                         'PT_(ImagNet)_FT_(ESC_35)', 
                         'PT_(ImagNet_AudioSet)_FT_(ESC_35)']
-    
+        
         for mod_index, model in enumerate(checkpoint_path):
             
             if model == None:
@@ -988,17 +1428,28 @@ def main():
                                                       imagenet_pretrain=args.imagenet_pretrain,
                                                       audioset_pretrain=args.audioset_pretrain,
                                                       checkpoint_path=model)
+                start_time = time.time()
+                audio_model, optimizer, classifier = run_sieamis_ast(train_loader, val_loader, audio_model, args, models_names, mod_index)
+                print('finished TRAIN at:')
+                print(f'{time.time() - start_time} sec\t {(time.time() - start_time)/60} min\n')
                 
-                audio_model, optimizer = run_sieamis_ast(train_loader, val_loader, audio_model, args, models_names, i, i)
-        
                 # Test the Siamese network using the infer function
-                test_metrics = sieamis_ast_infer(audio_model, test_loader)
+                start_time = time.time()
+                test_metrics = sieamis_ast_infer(audio_model, test_loader, classifier)
+                # [x_d, y_d, cla_pred]
+                classi_x, classi_y, classi_pred = test_metrics[5]
                 
-                exp_dir_ = exp_dir + f'/{models_names[i]}'
-                torch.save(audio_model.state_dict(), "%s/sieamis_audio_model.pth" % (exp_dir_))
-                torch.save(optimizer.state_dict(), "%s/sieamis_optim_state.pth" % (exp_dir_))
+                cla_bala_acc = balanced_accuracy_score(classi_y, classi_pred)
+                cla_acc = accuracy_score(classi_y, classi_pred)
+                
+                print('classifier scors: ')
+                print('acc scors: ', cla_acc)
+                print('balanc acc scors: ', cla_bala_acc)
+                
+                end_test_time = time.time()
+                print('finished test at:')
+                print(f'{end_test_time - start_time} sec\t {(end_test_time - start_time)/60} min\n')
 
-                
                 # Record the metrics for this model
                 model_metrics = {
                     'stats': test_metrics[0],
@@ -1008,51 +1459,53 @@ def main():
                 }
             
                 # Save the metrics for this model to a file
-                with open(exp_dir + f'/{models_names[i]}/model_test_metrics.json', 'w') as f:
+                with open(exp_dir + f'/{models_names[mod_index]}/model_test_metrics.json', 'w') as f:
                     json.dump(model_metrics, f, indent=1)
                 
                 print(f'Training complete for model {i+1}/{len(param_combinations)} with parameters:', params)
     
     CHACK_SIEAMIS_TRAIN = False
+    inclod_val = False
     if CHACK_SIEAMIS_TRAIN:
         
-        models_names = ['scratch_rand_pos_0', 'scratch_T(ESC_35)_0', 
-                        'PT_(ImagNet)_1', 'PT_(ImagNet)_FT_(ESC_35)_0',
-                        'PT_(ImagNet_AudioSet)_2', 'PT_(ImagNet_AudioSet)_FT_(ESC_35)_0']
-        
+        models_names = ['scratch_rand_pos', 'scratch_T(ESC_35)', 
+                        'PT_(ImagNet)', 'PT_(ImagNet)_FT_(ESC_35)',
+                        'PT_(ImagNet_AudioSet)', 'PT_(ImagNet_AudioSet)_FT_(ESC_35)']
+                
         sieamis_exp_path = '/home/almogk/FSL_TL_E_C/sieamis_ast_exp/'
         
-        sieamis_b_acc_val = []
-        sieamis_mc_val = []
         sieamis_b_acc_test = []
         sieamis_mc_test = []
         
+        sieamis_b_acc_val = []
+        sieamis_mc_val = []
+        
         for m_index, model in enumerate(range(len(models_names))):
-            
-            val_result_csv = pd.read_csv(sieamis_exp_path + f'{models_names[m_index]}/val_result.csv')
-            sieamis_b_acc_val.append(val_result_csv.iloc[:, 0].max())
-            
-            with open(sieamis_exp_path + f'{models_names[m_index]}/data_predict_val.json', 'r') as f:
-                val_result_json = json.load(f)
-            
-            with open(sieamis_exp_path + f'{models_names[m_index]}/model_test_metrics_{str(int(models_names[m_index].split("_")[-1])+1)}.json', 'r') as f:
+            with open(sieamis_exp_path + f'{models_names[m_index]}/model_test_metrics.json', 'r') as f:
                 test_result = json.load(f)
-            sieamis_b_acc_test.append(test_result['stats']['acc'])
             
-            binary_ground_truth_val = [sublist[0] for sublist in val_result_json['target']]
             A_predictions_test = [ii for i in test_result['A_predictions'] for ii in i]
             
-            binary_val, multi_val = cc.evaluate_sieamis_classification(val_result_json['A_predictions'], binary_ground_truth_val, val_result_json['A_real_class'])
             binary_test, multi_test = cc.evaluate_sieamis_classification(A_predictions_test, test_result['target'], test_result['A_real_class'])
-            
-            sieamis_mc_val.append([binary_val, multi_val])
+            sieamis_b_acc_test.append(binary_test[0])
             sieamis_mc_test.append([binary_test, multi_test])
+            
+            if inclod_val:
+                val_result_csv = pd.read_csv(sieamis_exp_path + f'{models_names[m_index]}/val_result.csv')
+                sieamis_b_acc_val.append(val_result_csv.iloc[:, 0].max())
+                with open(sieamis_exp_path + f'{models_names[m_index]}/data_predict_val.json', 'r') as f:
+                    val_result_json = json.load(f)
+                
+                binary_ground_truth_val = [sublist[0] for sublist in val_result_json['target']]
+                binary_val, multi_val = cc.evaluate_sieamis_classification(val_result_json['A_predictions'], binary_ground_truth_val, val_result_json['A_real_class'])
+                sieamis_mc_val.append([binary_val, multi_val])
         
-        cc.plot_sieamis_b_scors(models_names, sieamis_b_acc_val, sieamis_exp_path+f'/val_scors_b.png')
-        cc.plot_sieamis_b_scors(models_names, sieamis_b_acc_test, sieamis_exp_path+f'/test_scors_b.png')
-        
-        cc.plot_sieamis_scors(models_names, sieamis_mc_val, sieamis_exp_path + f'/val_scors_mc.png')
-        cc.plot_sieamis_scors(models_names, sieamis_mc_test, sieamis_exp_path + f'/test_scors_mc.png')
+        cc.plot_sieamis_b_scors(models_names, sieamis_b_acc_test, sieamis_exp_path+f'/test_scors_b___.png')
+        cc.plot_sieamis_scors(models_names, sieamis_mc_test, sieamis_exp_path + f'/test_scors_mc_15.png')
+
+        if inclod_val: 
+            cc.plot_sieamis_b_scors(models_names, sieamis_b_acc_val, sieamis_exp_path+f'/val_scors_b.png')
+            cc.plot_sieamis_scors(models_names, sieamis_mc_val, sieamis_exp_path + f'/val_scors_mc.png')
                                     
 if __name__ == '__main__':
     main()

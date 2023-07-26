@@ -303,7 +303,7 @@ def create_query_sets(data, ss, query_c_num, query_c_size):
         q_dict[index] = q_set
     return q_dict
 
-def create_open_set_queries(data, ss, query_c_num, query_c_size, unknown_ratio=0.3):
+def create_open_set_queries(data, ss, query_c_num, query_c_size, unknown_ratio=0.3, v_o_t='val'):
     """     
     Args:
         data : json file
@@ -328,10 +328,35 @@ def create_open_set_queries(data, ss, query_c_num, query_c_size, unknown_ratio=0
             label_to_wavs[label].append(wav)
         else:
             label_to_wavs[label] = [wav]
-
+    
     q_dict = {}
     ss_class_names = support_sets_dic['class_names']
     ss_class_roots = support_sets_dic['class_roots']
+    
+    if v_o_t == 'val':
+        # load the input JSON file
+        with open('/home/almogk/FSL_TL_E_C/data/FSL_SETS/5w_1s_shot/train/5000/5000_train_suppotr_sets.json', 'r') as f:
+            support_sets_dic_val = json.load(f)
+        
+        # load the input JSON file
+        with open('/home/almogk/FSL_TL_E_C/data/train_datafile/train_fsl_datafile/esc_fsl_train_data.json', 'r') as f:
+            data_v = json.load(f)
+            data_v = data_v['data']
+
+        # group the data by class labels
+        label_to_wavs_val = {}
+        for d in data_v:
+            label_v = d['labels']
+            wav_v = d['wav']
+            if label_v in label_to_wavs_val:
+                label_to_wavs_val[label_v].append(wav_v)
+            else:
+                label_to_wavs_val[label_v] = [wav_v]
+        
+        ss_class_names_val = support_sets_dic_val['class_names']
+        ss_class_roots_val = support_sets_dic_val['class_roots']
+
+   
 
     # create the query sets
     for index in range(len(ss_class_names)):
@@ -345,9 +370,12 @@ def create_open_set_queries(data, ss, query_c_num, query_c_size, unknown_ratio=0
             # Determine if the query will be a known sample or an unknown sample
             if random.random() < unknown_ratio:
                 # Unknown sample
-                sample_label = "unknown"
-                class_wavs = data  # All available samples
-
+                if v_o_t == 'test':
+                    sample_label = "unknown"
+                    class_wavs = [sample for label, wavs in label_to_wavs.items() if label not in ss_class_names[index] for sample in wavs]
+                elif v_o_t == 'val':
+                    sample_label = "unknown"
+                    class_wavs = [sample for label, wavs in label_to_wavs_val.items() if label not in ss_class_names_val[index] for sample in wavs]
             else:
                 # Known sample
                 sample_label = random.choice(ss_class_names[index])
