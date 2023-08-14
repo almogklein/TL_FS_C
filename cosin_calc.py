@@ -623,72 +623,73 @@ def plot_combined(conf_matrix, report, model_name, path):
     plt.savefig(os.path.join(path, f'combined_{model_name}.png'), bbox_inches='tight')
     plt.show()
 
-def plot_scors(models_names, classifications_repo, acc, tresh, path):
+def plot_scors(models_names, acc, tresh, path):
     # Generate heatmap of F1-score across all labels and models
     # Extract metrics for each label and model
     
-    f1_scores = []
-    recalls_scores = []
-    precisions_scores = []
+    # f1_scores = []
+    # recalls_scores = []
+    # precisions_scores = []
     
-    in_list = ['weighted avg']
-    for i, report in enumerate(classifications_repo):
-        f1_scores_per_report = []
-        recall_scores_per_report = []
-        precision_scores_per_report = []
+    # in_list = ['weighted avg']
+    # for i, report in enumerate(classifications_repo):
+    #     f1_scores_per_report = []
+    #     recall_scores_per_report = []
+    #     precision_scores_per_report = []
         
-        for label in report.keys():
-            if label in in_list:
-                f1_scores_per_report.append(report[label]['f1-score'])
-                recall_scores_per_report.append(report[label]['recall'])
-                precision_scores_per_report.append(report[label]['precision'])
+    #     for label in report.keys():
+    #         if label in in_list:
+    #             f1_scores_per_report.append(report[label]['f1-score'])
+    #             recall_scores_per_report.append(report[label]['recall'])
+    #             precision_scores_per_report.append(report[label]['precision'])
                 
-        recalls_scores.append(recall_scores_per_report[0])
-        f1_scores.append(f1_scores_per_report[0])
-        precisions_scores.append(precision_scores_per_report[0])
+    #     recalls_scores.append(recall_scores_per_report[0])
+    #     f1_scores.append(f1_scores_per_report[0])
+    #     precisions_scores.append(precision_scores_per_report[0])
 
     
     # Define bar plot
     fig, ax = plt.subplots(figsize=(12, 8))
     
-    n = 2
-    x = np.arange(0, len(models_names)*n, n)
-    width = 0.15
+    fs = 3
+    x = np.arange(0, len(models_names[1:])*fs, fs)
+    width = 0.8
     
-    space = 0.0015
-    rects1 = ax.bar(x - 3*(width + space), f1_scores, width, alpha=0.6, capsize=10, label='weighted F1-score')
-    # Add text above bars
-    for i, v in enumerate(f1_scores):
-        ax.text(i*n - 3*(width + space), v+0.02, f"{v:.4f}", ha='center')
+    # space = 0.0015
+    # rects1 = ax.bar(x - 3*(width + space), f1_scores, width, alpha=0.6, capsize=10, label='weighted F1-score')
+    # # Add text above bars
+    # for i, v in enumerate(f1_scores):
+    #     ax.text(i*n - 3*(width + space), v+0.02, f"{v:.4f}", ha='center')
 
-    # Plot bar chart of mean precision score
-    rects3 = ax.bar(x - width - space, precisions_scores, width, alpha=0.6, capsize=10, label='weighted Precision')
-    # Add text above bars
-    for i, v in enumerate(precisions_scores):
-        ax.text(i*n - (width + space), v+0.04, f"{v:.4f}", ha='center')
+    # # Plot bar chart of mean precision score
+    # rects3 = ax.bar(x - width - space, precisions_scores, width, alpha=0.6, capsize=10, label='weighted Precision')
+    # # Add text above bars
+    # for i, v in enumerate(precisions_scores):
+    #     ax.text(i*n - (width + space), v+0.04, f"{v:.4f}", ha='center')
 
-    # Plot bar chart of multi-class accuracy
-    rects6 = ax.bar(x + width + space, recalls_scores, width, alpha=0.6, capsize=10, label='weighted recall')
-    # Add text above bars
-    for i, v in enumerate(recalls_scores):
-        ax.text(i*n + (width + space), v+0.07, f"{v:.4f}", ha='center')
+    # # Plot bar chart of multi-class accuracy
+    # rects6 = ax.bar(x + width + space, recalls_scores, width, alpha=0.6, capsize=10, label='weighted recall')
+    # # Add text above bars
+    # for i, v in enumerate(recalls_scores):
+    #     ax.text(i*n + (width + space), v+0.07, f"{v:.4f}", ha='center')
+    acc_m = acc[0][1:]
+    acc_s = acc[1][1:]    
     
-    # Plot bar chart of multi-class accuracy
-    rects6 = ax.bar(x + 3*(width + space), acc, width, alpha=0.6, capsize=10, label='Multi-class balanc_ACC')
+    rects4 = ax.bar(x, acc_m, width, alpha=0.6, capsize=10, label='Multi-class balanced_ACC')
     # Add text above bars
-    for i, (v, t) in enumerate(zip(acc, tresh)):
-        ax.text(i*n + 3*(width + space), v+0.1, f"T:{t:.2f}\nACC:{v:.4f}", ha='center')
-        
+    for i, (t, m, s) in enumerate(zip(tresh, acc_m, acc_s)):
+        ax.text(i*fs, m+0.04, f"S: {t:.2f}\nB_ACC:\n\n{m:.2f} ± {s:.2f}", ha='center', fontsize=10)
+    
     # for i, v in enumerate(acc):
     #     ax.text(i*n + 3*(width + space), v+0.1, f"{v:.4f}", ha='center')
    
     # Add labels, title and axis ticks
     ax.set_xlabel('Model')
-    ax.set_ylabel('ACC')
-    ax.set_ylim([0, 1.1])
+    ax.set_ylabel('Balanced ACC')
+    ax.set_ylim([0, 1.2])
     
     ax.set_xticks(x)
-    ax.set_xticklabels(models_names)
+    ax.set_xticklabels(models_names[1:])
     ax.legend(loc='upper left')
     plt.xticks(rotation=35)
     plt.savefig(path, bbox_inches='tight')
@@ -709,11 +710,13 @@ def plot_b_scors(acc_best_list, eer_best_list, prec_best_list, thresholds, model
     # # Add text above bars
     # for i, (v, t) in enumerate(zip(acc_best_list, thresholds[1])):
     #     ax.text(i, v+0.05, f"T: {t:.2f}\nACC: {v*100:.3f}%", ha='center')
+    acc_m = eer_best_list[0][1:]
+    acc_s = eer_best_list[1][1:]
         
-    rects2 = ax.bar(x, eer_best_list, width, alpha=0.6, capsize=10, label=lab)
+    rects2 = ax.bar(x, acc_m, width, alpha=0.6, capsize=10, label=lab)
     # Add text above bars
-    for i, (v, t) in enumerate(zip(eer_best_list, thresholds)):
-        ax.text(i, v+0.05, f"T: {t:.2f}\nB_ACC: {v*100:.3f}", ha='center')
+    for i, (t, m, s) in enumerate(zip(thresholds, acc_m, acc_s)):
+        ax.text(i, m+0.05, f"T: {t:.2f}\nB_ACC:\n{m:.2f} ± {s:.2f}", ha='center')
 
     # rects3 = ax.bar(x, prec_best_list, width, alpha=0.6, capsize=10, label=lab)
     # # Add text above bars
@@ -773,35 +776,36 @@ def plot_ss_scors(accuracies_b, accuracies_b_0, accuracies_b_per_ss_, sig_alfa, 
     # Define bar plot
     fig, ax = plt.subplots(figsize=(12, 7))
     
-    width = 0.4
-    space_between_bars = 0.55
-    fs = 6
+    width = 1.5
+    space_between_bars = 2.7
+    fs = 22
     x = np.arange(0, len(models_names)*fs, fs)
+    
 
-    rects1 = ax.bar(x - 2*width - space_between_bars, accuracies_b, width, alpha=0.6, capsize=10, label='Mean')
+    rects1 = ax.bar(x - 2*width - space_between_bars, accuracies_b[0], width, alpha=0.6, capsize=10, label='Mean')
     # Add text above bars
-    for i, (v, t) in enumerate(zip(accuracies_b, sig_alfa[0])):
-        ax.text(i*fs - 2*width - space_between_bars, v+0.08, f"S:{t:.2f}\n{v:.3f}", ha='center', fontsize=fs)
+    for i, (t, m, s) in enumerate(zip(sig_alfa[0], accuracies_b[0], accuracies_b[1])):
+        ax.text(i*fs- 2*width - space_between_bars, m+0.11, f"S: {t:.2f}\nB ACC:\n{m:.2f} ± {s:.2f}", ha='center', fontsize=6)
 
     # rects2 = ax.bar(x - 2*width - space_between_bars, accuracies_b[1], width, alpha=0.6, capsize=10, label='5_threshol_mad')
     # # Add text above bars
     # for i, (v, t) in enumerate(zip(accuracies_b[1], sig_alfa[1])):
     #     ax.text(i*fs - 2*width - space_between_bars, v+0.25, f"A:{t:.2f}\n{v:.3f}", ha='center', fontsize=fs)
 
-    rects4 = ax.bar(x , accuracies_b_0, width, alpha=0.6, capsize=10, label='Max')
+    rects4 = ax.bar(x, accuracies_b_0[0], width, alpha=0.6, capsize=10, label='Max')
     # Add text above bars
-    for i, (v, t) in enumerate(zip(accuracies_b_0, sig_alfa[1])):
-        ax.text(i*fs , v+0.02, f"A:{t:.2f}\n{v:.3f}", ha='center', fontsize=fs)
+    for i, (t, m, s) in enumerate(zip(sig_alfa[1], accuracies_b_0[0], accuracies_b_0[1])):
+        ax.text(i*fs, m+0.02, f"S: {t:.2f}\nB ACC:\n{m:.2f} ± {s:.2f}", ha='center', fontsize=6)
     
     # rects3 = ax.bar(x - width, accuracies_b_0[0], width, alpha=0.6, capsize=10, label='4_threshol_mad')
     # # Add text above bars
     # for i, (v, t) in enumerate(zip(accuracies_b_0[0], sig_alfa[2])):
     #     ax.text(i*fs - width, v+0.15, f"S:{t:.2f}\n{v:.3f}", ha='center', fontsize=fs)
     
-    rects5 = ax.bar(x + 2*width + space_between_bars, accuracies_b_per_ss_, width, alpha=0.6, capsize=10, label='MAD')
+    rects5 = ax.bar(x + 2*width + space_between_bars, accuracies_b_per_ss_[0], width, alpha=0.6, capsize=10, label='MAD')
     # Add text above bars
-    for i, (v, t) in enumerate(zip(accuracies_b_per_ss_, sig_alfa[2])):
-        ax.text(i*fs + 2*width + space_between_bars, v+0.1, f"S:{t:.2f}\n{v:.3f}", ha='center', fontsize=fs)
+    for i, (t, m, s) in enumerate(zip(sig_alfa[2], accuracies_b_per_ss_[0], accuracies_b_per_ss_[1])):
+        ax.text(i*fs + 2*width + space_between_bars, m+0.12, f"S: {t:.2f}\nB ACC:\n{m:.2f} ± {s:.2f}", ha='center', fontsize=6)
 
     # rects6 = ax.bar(x + 3*width + 2*space_between_bars, accuracies_b_per_ss_[1], width, alpha=0.6, capsize=10, label='10_threshol_mad')
     # # Add text above bars
@@ -809,10 +813,10 @@ def plot_ss_scors(accuracies_b, accuracies_b_0, accuracies_b_per_ss_, sig_alfa, 
     #     ax.text(i*fs + 3*width + 2*space_between_bars, v+0.13, f"S:{t:.2f}\n{v:.3f}", ha='center', fontsize=fs)
 
     # Add labels, title and axis ticks
-    ax.set_xlim(-4, len(models_names)*fs - 0.5)
+    ax.set_xlim(-15, len(models_names)*fs - 0.5)
     ax.set_xlabel('Model')
     ax.set_ylabel('Multi-class balanced Acc')
-    ax.set_ylim(0, 1.1)
+    ax.set_ylim(0, 1.25)
     ax.set_xticks(x)
     ax.set_xticklabels(models_names)
     ax.legend(loc='upper left')
@@ -822,25 +826,27 @@ def plot_ss_scors(accuracies_b, accuracies_b_0, accuracies_b_per_ss_, sig_alfa, 
 
     plt.show()
     
-def plot_sieamis_b_scors(models_names, accuracies_b, path):
+def plot_sieamis_mean_std_scors(text, models_names, accuracies_b, path):
     
     # Define bar plot
     fig, ax = plt.subplots(figsize=(12, 8))
     
-    x = np.arange(len(models_names))
-    width = 0.2
+    fs = 3
+    x = np.arange(0, len(models_names)*fs, fs)
+    width = 0.8
     
-    rects1 = ax.bar(x, accuracies_b, width,
-                    alpha=0.6, capsize=10, label='binary_acc')
+    acc_m = accuracies_b[0]
+    acc_s = accuracies_b[1]    
     
+    rects4 = ax.bar(x, acc_m, width, alpha=0.6, capsize=10, label=f'{text} balanced_ACC')
     # Add text above bars
-    for i, v in enumerate(accuracies_b):
-        ax.text(i, v+0.02, f"{v*100:.0f}", ha='center')
+    for i, (m, s) in enumerate(zip(acc_m, acc_s)):
+        ax.text(i*fs, m+0.04, f"B_ACC:\n\n{m:.2f} ± {s:.2f}", ha='center', fontsize=10)
     
     # Add labels, title and axis ticks
     ax.set_xlabel('Model')
-    ax.set_ylabel('Binary Accuracy')
-    ax.set_ylim(0, 1.05)
+    ax.set_ylabel(f'{text} Balanced Accuracy')
+    ax.set_ylim(0, 1.2)
     
     ax.set_xticks(x)
     ax.set_xticklabels(models_names)
@@ -1083,13 +1089,13 @@ def calculate_fix_threshold_openset(distances, labels, num_thresholds=100):
     
     return all_best_thresholds
 
-def calculate_pers_threshold_openset(distances, distances_no_q, pairs, ss_param, models_names, support_set_num, k_way, q_c_n, q_c_size,  support_set_classes, id2label_map, binary_ground_truth, multi_ground_truth, class_labels, num_thresholds=1000):
+def calculate_pers_threshold_openset(distances, distances_no_q, pairs, ss_param, models_names, support_set_num, k_way, q_c_n, q_c_size,  support_set_classes, id2label_map, binary_ground_truth, multi_ground_truth, class_labels, num_thresholds=10):
     
     ss_param_no_q, ss_param_q = ss_param
     pairs_q, pairs_no_q = pairs
     
-    tresh_sig_const = np.linspace(0, 6, num=num_thresholds)
-    tresh_alfa_const = np.linspace(0, 6, num=num_thresholds)
+    tresh_sig_const = np.linspace(0, 4, num=num_thresholds)
+    # tresh_alfa_const = np.linspace(0, 4, num=num_thresholds)
     
     acc_list_5_mss, acc_list_5_mad, acc_list_4_mss, acc_list_4_mad, acc_list_10_mss, acc_list_10_mass_, err_list_5_mss, err_list_5_mad, err_list_4_mss, err_list_4_mad, err_list_10_mss, err_list_10_mass_ = [[] for _ in range(12)]
     acc_list_5_mss__ = []   
@@ -1099,93 +1105,93 @@ def calculate_pers_threshold_openset(distances, distances_no_q, pairs, ss_param,
     acc_list_10_mss__= []
     acc_list_10_mass___= []
     all_tresh_ = []
-    for index_const, (sig, alf) in enumerate(zip(tresh_sig_const, tresh_alfa_const)):
+    for index_const, (sig) in enumerate(tresh_sig_const):
         ss_tresholds_all, ss_tresholds_all_0, ss_tresholds_no_q_max_sig_std, ss_tresholds_no_q_mean_sig_std, ss_tresholds_all_max_alfa_diff, ss_tresholds_all_0_max_alfa_diff = [[] for _ in range(6)]
         for i in range(len(models_names)):
             
-            ss_tresholds_all.append([mad + sig*std for mad, std in zip(ss_param_q['MAD'][i], ss_param_q['f_s_dif'][i])])                    
-            ss_tresholds_all_max_alfa_diff.append([max_ - sig*diff_ for max_, diff_ in zip(ss_param_q['max'][i], ss_param_q['f_s_dif'][i])])
+            ss_tresholds_all.append([mad + sig*std for mad, std in zip(ss_param_q['MAD'][i], ss_param_q['std_all'][i])])                    
+            # ss_tresholds_all_max_alfa_diff.append([max_ - sig*diff_ for max_, diff_ in zip(ss_param_q['max'][i], ss_param_q['f_s_dif'][i])])
 
-            ss_tresholds_all_0.append([mean + sig*std for mean, std in zip(ss_param_q['MAD_0'][i], ss_param_q['f_s_dif'][i])])
-            ss_tresholds_all_0_max_alfa_diff.append([max_ + sig*diff_ for max_, diff_ in zip(ss_param_q['max0'][i], ss_param_q['f_s_dif'][i])])
+            ss_tresholds_all_0.append([mean + sig*std for mean, std in zip(ss_param_q['MAD_0'][i], ss_param_q['std_0'][i])])
+            # ss_tresholds_all_0_max_alfa_diff.append([max_ + sig*diff_ for max_, diff_ in zip(ss_param_q['max0'][i], ss_param_q['f_s_dif'][i])])
             
-            ss_tresholds_no_q_mean_sig_std.append([value for value in [mean[0] + sig*std[0] for mean, std in zip(ss_param_no_q['MAD'][i], ss_param_no_q['std_all'][i]) for _ in range(q_c_n[1]*q_c_size[1])]])
-            ss_tresholds_no_q_max_sig_std.append([max_[0] + sig*std for max_, std in zip([value for val in ss_param_no_q['max'][i] for value in [val] * (q_c_n[1]* q_c_size[1])], ss_param_q['f_s_dif'][i])])
+            ss_tresholds_no_q_mean_sig_std.append([value for value in [mean[0] + sig*std[0] for mean, std in zip(ss_param_no_q['MAD'][i], ss_param_no_q['std_all'][i]) for _ in range(q_c_n[1]*q_c_size[0])]])
+            # ss_tresholds_no_q_max_sig_std.append([max_[0] + sig*std for max_, std in zip([value for val in ss_param_no_q['MAD'][i] for value in [val] * (q_c_n[1]* q_c_size[1])], ss_param_q['f_s_dif'][i])])
             
-        bc_p_mss, accuracies_b_mss, reports_b_mss, conf_matrices_b_mss, eer_mss, bala_mss, incd_all_mc_mss = evaluate_classification_per_ss(distances, pairs_q, ss_tresholds_all, support_set_num[0], k_way[0], True, q_c_n[1], q_c_size[1], support_set_classes, id2label_map, binary_ground_truth, multi_ground_truth, class_labels)
-        bc_p_MAD, accuracies_b_mad, reports_b_mad, _, eer_mad, bala_mad, incd_all_mc_mad = evaluate_classification_per_ss(distances, pairs_q, ss_tresholds_all_max_alfa_diff, support_set_num[0], k_way[0], True, q_c_n[1], q_c_size[1], support_set_classes, id2label_map, binary_ground_truth, multi_ground_truth, class_labels)
+        bc_p_mss, accuracies_b_mss, reports_b_mss, conf_matrices_b_mss, eer_mss, bala_mss, incd_all_mc_mss = evaluate_classification_per_ss(distances, pairs_q, ss_tresholds_all, support_set_num[0], k_way[0], True, q_c_n[1], q_c_size[0], support_set_classes, id2label_map, binary_ground_truth, multi_ground_truth, class_labels)
+        # bc_p_MAD, accuracies_b_mad, reports_b_mad, _, eer_mad, bala_mad, incd_all_mc_mad = evaluate_classification_per_ss(distances, pairs_q, ss_tresholds_all_max_alfa_diff, support_set_num[0], k_way[0], True, q_c_n[1], q_c_size[1], support_set_classes, id2label_map, binary_ground_truth, multi_ground_truth, class_labels)
         
-        bc_p_0_mss, accuracies_b_0_mss, reports_b_0_mss, _, eer_0_mss, bala_0_mss, incd_all_mc_0_mss = evaluate_classification_per_ss(distances, pairs_q, ss_tresholds_all_0, support_set_num[0], k_way[0], True, q_c_n[1], q_c_size[1], support_set_classes, id2label_map, binary_ground_truth, multi_ground_truth, class_labels)
-        bc_p_0_MAD, accuracies_b_0_mad, reports_b_0_mad, _, eer_0_mad, bala_0_mad, incd_all_mc_0_mad = evaluate_classification_per_ss(distances, pairs_q, ss_tresholds_all_0_max_alfa_diff, support_set_num[0], k_way[0], True, q_c_n[1], q_c_size[1], support_set_classes, id2label_map, binary_ground_truth, multi_ground_truth, class_labels)
+        bc_p_0_mss, accuracies_b_0_mss, reports_b_0_mss, _, eer_0_mss, bala_0_mss, incd_all_mc_0_mss = evaluate_classification_per_ss(distances, pairs_q, ss_tresholds_all_0, support_set_num[0], k_way[0], True, q_c_n[1], q_c_size[0], support_set_classes, id2label_map, binary_ground_truth, multi_ground_truth, class_labels)
+        # bc_p_0_MAD, accuracies_b_0_mad, reports_b_0_mad, _, eer_0_mad, bala_0_mad, incd_all_mc_0_mad = evaluate_classification_per_ss(distances, pairs_q, ss_tresholds_all_0_max_alfa_diff, support_set_num[0], k_way[0], True, q_c_n[1], q_c_size[1], support_set_classes, id2label_map, binary_ground_truth, multi_ground_truth, class_labels)
         
-        bc_p_ss, accuracies_b_per_ss, reports_b_ss, _, eer_ss, bala_ss, incd_all_mc_10_ss = evaluate_classification_per_ss(distances, pairs_q, ss_tresholds_no_q_mean_sig_std, support_set_num[0], k_way[0], False, q_c_n[1], q_c_size[1], support_set_classes, id2label_map, binary_ground_truth, multi_ground_truth, class_labels)
-        bc_p_0_ss, accuracies_b_per_ss_max, reports_b_ss_max_, _, eer_ss_, bala_ss_max, incd_all_mc_10_max = evaluate_classification_per_ss(distances, pairs_q, ss_tresholds_no_q_max_sig_std, support_set_num[0], k_way[0], True, q_c_n[1], q_c_size[1], support_set_classes, id2label_map, binary_ground_truth, multi_ground_truth, class_labels)
+        bc_p_ss, accuracies_b_per_ss, reports_b_ss, _, eer_ss, bala_ss, incd_all_mc_10_ss = evaluate_classification_per_ss(distances, pairs_q, ss_tresholds_no_q_mean_sig_std, support_set_num[0], k_way[0], False, q_c_n[1], q_c_size[0], support_set_classes, id2label_map, binary_ground_truth, multi_ground_truth, class_labels)
+        # bc_p_0_ss, accuracies_b_per_ss_max, reports_b_ss_max_, _, eer_ss_, bala_ss_max, incd_all_mc_10_max = evaluate_classification_per_ss(distances, pairs_q, ss_tresholds_no_q_max_sig_std, support_set_num[0], k_way[0], True, q_c_n[1], q_c_size[1], support_set_classes, id2label_map, binary_ground_truth, multi_ground_truth, class_labels)
         
         acc_list_5_mss.append(bala_mss)
-        acc_list_5_mad.append(bala_mad)
+        # acc_list_5_mad.append(bala_mad)
         acc_list_4_mss.append(bala_0_mss)
-        acc_list_4_mad.append(bala_0_mad)
+        # acc_list_4_mad.append(bala_0_mad)
         acc_list_10_mss.append(bala_ss)
-        acc_list_10_mass_.append(bala_ss_max)
+        # acc_list_10_mass_.append(bala_ss_max)
         
         acc_list_5_mss__.append([elem[0] for elem in incd_all_mc_mss])
-        acc_list_5_mad__.append([elem[0] for elem in incd_all_mc_mad])
+        # acc_list_5_mad__.append([elem[0] for elem in incd_all_mc_mad])
         acc_list_4_mss__.append([elem[0] for elem in incd_all_mc_0_mss])
-        acc_list_4_mad__.append([elem[0] for elem in incd_all_mc_0_mad])
+        # acc_list_4_mad__.append([elem[0] for elem in incd_all_mc_0_mad])
         acc_list_10_mss__.append([elem[0] for elem in incd_all_mc_10_ss])
-        acc_list_10_mass___.append([elem[0] for elem in incd_all_mc_10_max])
+        # acc_list_10_mass___.append([elem[0] for elem in incd_all_mc_10_max])
         
         err_list_5_mss.append(eer_mss)
-        err_list_5_mad.append(eer_mad)
+        # err_list_5_mad.append(eer_mad)
         err_list_4_mss.append(eer_0_mss)
-        err_list_4_mad.append(eer_0_mad)
+        # err_list_4_mad.append(eer_0_mad)
         err_list_10_mss.append(eer_ss)
-        err_list_10_mass_.append(eer_ss_)
+        # err_list_10_mass_.append(eer_ss_)
         
-        all_tresh_.append([sig, alf])
+        all_tresh_.append([sig])
     
     best_indices_acc_mss = [[np.argmax([inner_list[i] for inner_list in acc_list_5_mss]), np.max([inner_list[i] for inner_list in acc_list_5_mss])] for i in range(len(acc_list_5_mss__[0]))]
-    best_indices_acc_mad = [[np.argmax([inner_list[i] for inner_list in acc_list_5_mad]), np.max([inner_list[i] for inner_list in acc_list_5_mad])] for i in range(len(acc_list_5_mad__[0]))]
+    # best_indices_acc_mad = [[np.argmax([inner_list[i] for inner_list in acc_list_5_mad]), np.max([inner_list[i] for inner_list in acc_list_5_mad])] for i in range(len(acc_list_5_mad__[0]))]
     
     best_indices_acc_0_mss = [[np.argmax([inner_list[i] for inner_list in acc_list_4_mss]), np.max([inner_list[i] for inner_list in acc_list_4_mss])] for i in range(len(acc_list_4_mss__[0]))]
-    best_indices_acc_0_mad = [[np.argmax([inner_list[i] for inner_list in acc_list_4_mad]), np.max([inner_list[i] for inner_list in acc_list_4_mad])] for i in range(len(acc_list_4_mad__[0]))]
+    # best_indices_acc_0_mad = [[np.argmax([inner_list[i] for inner_list in acc_list_4_mad]), np.max([inner_list[i] for inner_list in acc_list_4_mad])] for i in range(len(acc_list_4_mad__[0]))]
     
     best_indices_acc_per_ss = [[np.argmax([inner_list[i] for inner_list in acc_list_10_mss]), np.max([inner_list[i] for inner_list in acc_list_10_mss])] for i in range(len(acc_list_10_mss__[0]))]
-    best_indices_acc_ss_max = [[np.argmax([inner_list[i] for inner_list in acc_list_10_mass_]), np.max([inner_list[i] for inner_list in acc_list_10_mass_])] for i in range(len(acc_list_10_mass___[0]))]
+    # best_indices_acc_ss_max = [[np.argmax([inner_list[i] for inner_list in acc_list_10_mass_]), np.max([inner_list[i] for inner_list in acc_list_10_mass_])] for i in range(len(acc_list_10_mass___[0]))]
     
     sig_5 = [all_tresh_[best_indices_acc_mss[i][0]][0] for i in range(len(best_indices_acc_mss))]
-    alfa_5 = [all_tresh_[best_indices_acc_mad[i][0]][1] for i in range(len(best_indices_acc_mad))]
+    # alfa_5 = [all_tresh_[best_indices_acc_mad[i][0]][1] for i in range(len(best_indices_acc_mad))]
     
     sig_4 = [all_tresh_[best_indices_acc_0_mss[i][0]][0] for i in range(len(best_indices_acc_0_mss))]
-    alfa_4 = [all_tresh_[best_indices_acc_0_mad[i][0]][1] for i in range(len(best_indices_acc_0_mad))]
+    # alfa_4 = [all_tresh_[best_indices_acc_0_mad[i][0]][1] for i in range(len(best_indices_acc_0_mad))]
     
     sig_10 = [all_tresh_[best_indices_acc_per_ss[i][0]][0] for i in range(len(best_indices_acc_per_ss))]
-    sig_10_ = [all_tresh_[best_indices_acc_ss_max[i][0]][0] for i in range(len(best_indices_acc_ss_max))]
+    # sig_10_ = [all_tresh_[best_indices_acc_ss_max[i][0]][0] for i in range(len(best_indices_acc_ss_max))]
     
-    sig_alfa_acc = [sig_5, alfa_5, sig_4, alfa_4, sig_10, sig_10_]
+    sig_alfa_acc = [sig_5, sig_4, sig_10]
     
-    best_indices_err_mss = [[np.argmin([inner_list[i] for inner_list in err_list_5_mss]), np.min([inner_list[i] for inner_list in err_list_5_mss])] for i in range(len(err_list_5_mss[0]))]
-    best_indices_err_mad = [[np.argmin([inner_list[i] for inner_list in err_list_5_mad]), np.min([inner_list[i] for inner_list in err_list_5_mad])] for i in range(len(err_list_5_mad[0]))]
+    # best_indices_err_mss = [[np.argmin([inner_list[i] for inner_list in err_list_5_mss]), np.min([inner_list[i] for inner_list in err_list_5_mss])] for i in range(len(err_list_5_mss[0]))]
+    # best_indices_err_mad = [[np.argmin([inner_list[i] for inner_list in err_list_5_mad]), np.min([inner_list[i] for inner_list in err_list_5_mad])] for i in range(len(err_list_5_mad[0]))]
     
-    best_indices_err_0_mss = [[np.argmin([inner_list[i] for inner_list in err_list_4_mss]), np.min([inner_list[i] for inner_list in err_list_4_mss])] for i in range(len(err_list_4_mss[0]))]
-    best_indices_err_0_mad = [[np.argmin([inner_list[i] for inner_list in err_list_4_mad]), np.min([inner_list[i] for inner_list in err_list_4_mad])] for i in range(len(err_list_4_mad[0]))]
+    # best_indices_err_0_mss = [[np.argmin([inner_list[i] for inner_list in err_list_4_mss]), np.min([inner_list[i] for inner_list in err_list_4_mss])] for i in range(len(err_list_4_mss[0]))]
+    # best_indices_err_0_mad = [[np.argmin([inner_list[i] for inner_list in err_list_4_mad]), np.min([inner_list[i] for inner_list in err_list_4_mad])] for i in range(len(err_list_4_mad[0]))]
     
-    best_indices_err_per_ss = [[np.argmin([inner_list[i] for inner_list in err_list_10_mss]), np.min([inner_list[i] for inner_list in err_list_10_mss])] for i in range(len(err_list_10_mss[0]))]
-    best_indices_err_ss_max = [[np.argmin([inner_list[i] for inner_list in err_list_10_mass_]), np.min([inner_list[i] for inner_list in err_list_10_mass_])] for i in range(len(err_list_10_mass_[0]))]
+    # best_indices_err_per_ss = [[np.argmin([inner_list[i] for inner_list in err_list_10_mss]), np.min([inner_list[i] for inner_list in err_list_10_mss])] for i in range(len(err_list_10_mss[0]))]
+    # best_indices_err_ss_max = [[np.argmin([inner_list[i] for inner_list in err_list_10_mass_]), np.min([inner_list[i] for inner_list in err_list_10_mass_])] for i in range(len(err_list_10_mass_[0]))]
 
     
-    sig_5_eer = [all_tresh_[best_indices_err_mss[i][0]][0] for i in range(len(best_indices_err_mss))]
-    alfa_5_eer = [all_tresh_[best_indices_err_mad[i][0]][1] for i in range(len(best_indices_err_mad))]
+    # sig_5_eer = [all_tresh_[best_indices_err_mss[i][0]][0] for i in range(len(best_indices_err_mss))]
+    # alfa_5_eer = [all_tresh_[best_indices_err_mad[i][0]][1] for i in range(len(best_indices_err_mad))]
     
-    sig_4_eer = [all_tresh_[best_indices_err_0_mss[i][0]][0] for i in range(len(best_indices_err_0_mss))]
-    alfa_4_eer = [all_tresh_[best_indices_err_0_mad[i][0]][1] for i in range(len(best_indices_err_0_mad))]
+    # sig_4_eer = [all_tresh_[best_indices_err_0_mss[i][0]][0] for i in range(len(best_indices_err_0_mss))]
+    # alfa_4_eer = [all_tresh_[best_indices_err_0_mad[i][0]][1] for i in range(len(best_indices_err_0_mad))]
     
-    sig_10_eer = [all_tresh_[best_indices_err_per_ss[i][0]][0] for i in range(len(best_indices_err_per_ss))]
-    sig_10__eer= [all_tresh_[best_indices_acc_ss_max[i][0]][0] for i in range(len(best_indices_err_ss_max))]
+    # sig_10_eer = [all_tresh_[best_indices_err_per_ss[i][0]][0] for i in range(len(best_indices_err_per_ss))]
+    # sig_10__eer= [all_tresh_[best_indices_acc_ss_max[i][0]][0] for i in range(len(best_indices_err_ss_max))]
     
-    sig_alfa_eer = [sig_5_eer, alfa_5_eer, sig_4_eer, alfa_4_eer, sig_10_eer, sig_10__eer]
+    # sig_alfa_eer = [sig_5_eer, alfa_5_eer, sig_4_eer, alfa_4_eer, sig_10_eer, sig_10__eer]
     
-    return [sig_alfa_acc, sig_alfa_eer]
+    return [sig_alfa_acc]
 
 def calculate_pers_CAT_threshold_openset(distances, distances_no_q, pairs, ss_param, models_names, support_set_num, k_way, q_c_n, q_c_size,
                                          support_set_classes, id2label_map, binary_ground_truth, multi_ground_truth, class_labels, num_thresholds=1000):
@@ -1193,7 +1199,7 @@ def calculate_pers_CAT_threshold_openset(distances, distances_no_q, pairs, ss_pa
     ss_param_no_q, ss_param_q = ss_param
     pairs_q, pairs_no_q = pairs
     
-    tresh_sig_const = np.linspace(0, 6, num=num_thresholds)
+    tresh_sig_const = np.linspace(0, 3, num=num_thresholds)
     
     acc_list_5_MAX = []   
     acc_list_5_Mean = []
@@ -1229,8 +1235,8 @@ def calculate_pers_CAT_threshold_openset(distances, distances_no_q, pairs, ss_pa
     best_indices_acc_Median = [[np.argmax([inner_list[i] for inner_list in acc_list_5_Median]), np.max([inner_list[i] for inner_list in acc_list_5_Median])] for i in range(len(acc_list_5_Median[0]))]
     
     sig_max = [all_tresh_[best_indices_acc_max[i][0]] for i in range(len(best_indices_acc_max))]
-    sig_mean = [all_tresh_[best_indices_acc_max[i][0]] for i in range(len(best_indices_acc_max))]
-    sig_median = [all_tresh_[best_indices_acc_max[i][0]] for i in range(len(best_indices_acc_max))]
+    sig_mean = [all_tresh_[best_indices_acc_Mean[i][0]] for i in range(len(best_indices_acc_Mean))]
+    sig_median = [all_tresh_[best_indices_acc_Median[i][0]] for i in range(len(best_indices_acc_Median))]
     conf_MAX = [conf_acc_list_5_MAX[best_indices_acc_max[i][0]][i] for i in range(len(best_indices_acc_max))]
     
     return sig_max, sig_mean, sig_median, conf_MAX
@@ -1303,7 +1309,7 @@ def multiclass_binary_openset_classification(distances_real, thresholds, support
     
     return multiclass_predictions_all_list, binary_predictions_all_list
 
-def plot_confusion_matrices(confusion_matrices, path, class_labels, single_plot=False):
+def plot_confusion_matrices(confusion_matrices, path, class_labels, k, single_plot=False):
     num_models = len(confusion_matrices)
     num_rows = 3
     num_cols = 2
@@ -1330,7 +1336,7 @@ def plot_confusion_matrices(confusion_matrices, path, class_labels, single_plot=
     fig.tight_layout()
     
     if single_plot:
-        plt.savefig(f"{path}/combined_confusion_matrix.png", bbox_inches='tight')
+        plt.savefig(f"{path}/combined_confusion_matrix_fold_{k}.png", bbox_inches='tight')
         plt.show()
     else:
         for i, matrix in enumerate(confusion_matrices):
@@ -1340,5 +1346,5 @@ def plot_confusion_matrices(confusion_matrices, path, class_labels, single_plot=
             plt.title(f"Confusion Matrix {i+1}")
             plt.xlabel('Predicted label')
             plt.ylabel('True label')
-            plt.savefig(f"{path}/confusion_matrix_{i+1}.png", bbox_inches='tight')
+            plt.savefig(f"{path}/confusion_matrix_{i+1}_fold_{k}.png", bbox_inches='tight')
             plt.close()

@@ -6,6 +6,7 @@
 
 import os
 import json
+import random
 import itertools
 import data_prep
 import numpy as np
@@ -31,6 +32,54 @@ class AverageMeter(object):
         self.count += n
         self.avg = self.sum / self.count
 
+def check_unique_sets(*sets):
+    all_values = set()
+    for s in sets:
+        for value in s:
+            if value in all_values:
+                return False
+            all_values.add(value)
+    return True
+
+def split_names_with_cross_validation(class_names, save_file_path, num_folds=5):
+    # Shuffle the class_names to randomize the order
+    random.shuffle(class_names)
+
+    # Determine the size of test and validation sets
+    test_size = 10
+    validation_size = 5
+
+    # Calculate the size of the training set
+    total_names = len(class_names)
+    # train_size = total_names - (num_folds * (test_size + validation_size))
+
+    # Initialize lists to store the results
+    training_sets = []
+    validation_sets = []
+    test_sets = []
+
+    # Perform cross-validation
+    for i in range(num_folds):
+        # Calculate the start and end indices for each fold
+        start_idx = i * (test_size + validation_size)
+        end_idx = (i + 1) * (test_size + validation_size)
+
+        # Separate into test, validation, and training sets
+        test_set = class_names[start_idx:start_idx + test_size]
+        validation_set = class_names[start_idx + test_size:start_idx + test_size + validation_size]
+        training_set = class_names[:start_idx] + class_names[end_idx:]
+
+        # Store the sets
+        test_sets.append(test_set)
+        validation_sets.append(validation_set)
+        training_sets.append(training_set)
+
+    # write_json(save_file_path + f'/test_sets_names.json', test_sets)
+    # write_json(save_file_path + f'/validation_sets_names.json', validation_sets)
+    # write_json(save_file_path + f'/training_sets_names.json', training_sets)
+
+    return training_sets, validation_sets, test_sets
+
 def read_json(path):
     
     with open(path, 'r') as f:
@@ -52,12 +101,12 @@ def make_task_sets_from_q(k_way, n_shot, train_support_set_num, query_c_num, que
                 for j in range(len(query_c_num)):
                     for k in range(len(query_c_size)):
                     
-                        creat_f_s_sets(CODE_REPO_PATH, n_shot[nshot], k_way[kway], query_c_num[j], query_c_size[k], train_support_set_num[i], test_support_set_num[i], val_support_set_num, i)
+                        creat_f_s_sets(CODE_REPO_PATH, n_shot[nshot], k_way[kway], query_c_num[j], query_c_size[k], train_support_set_num[i], test_support_set_num[i], val_support_set_num[0], i)
                         print(f"finished creating task sets for {n_shot[nshot]} shot {k_way[kway]} way {query_c_num[j]} query classes {query_c_size[k]} query examples per class")
     
     print('finished all tasks')
 
-def make_task_sets_from_unknown_q(k_way, n_shot, query_c_num, query_c_size, CODE_REPO_PATH, test_support_set_num, text, data_path):
+def make_task_sets_from_unknown_q(k_way, n_shot, query_c_num, query_c_size, CODE_REPO_PATH, test_support_set_num, kk, text, data_path):
     
     for kway in range(len(k_way)):
         for nshot in range(len(n_shot)):
@@ -66,17 +115,17 @@ def make_task_sets_from_unknown_q(k_way, n_shot, query_c_num, query_c_size, CODE
                 for j in range(len(query_c_num)):
                     for k in range(len(query_c_size)):
                     
-                        creat_unknown_f_s_sets(CODE_REPO_PATH, n_shot[nshot], k_way[kway], query_c_num[j], query_c_size[k], test_support_set_num[i], data_path, text)
+                        creat_unknown_f_s_sets(CODE_REPO_PATH, n_shot[nshot], k_way[kway], query_c_num[j], query_c_size[k], test_support_set_num[i], data_path, text, kk)
                         print(f"finished creating known/unknown task sets for {n_shot[nshot]} shot {k_way[kway]} way {query_c_num[j]} query classes {query_c_size[k]} query examples per class")
     
     print('finished all tasks')
 
 def load_pt_ft_models_checkpoint_path(model_dir_pattern):
-            
+    
     models_checkpoint_path = []
     for j in ["00", "10", "11"]:
         
-        model_path = model_dir_pattern.format(j, 2)
+        model_path = model_dir_pattern.format(j, 4)
         if os.path.exists(model_path):
             models_checkpoint_path.append(model_path)
     
@@ -143,7 +192,7 @@ def display_label_bar_chart(label_counts):
     plt.savefig(os.path.join('/home/almogk/FSL_TL_E_C/data/FSL_SETS/5w_1s_shot/test', f'sss.png'), bbox_inches='tight')
     plt.show()
 
-def create_support_sets_and_q(json_data_path, n_shot, k_way, support_set_num, s, query_c_num, query_c_size, save_path):
+def create_support_sets_and_q(json_data_path, n_shot, k_way, support_set_num, s, query_c_num, query_c_size, save_path, k):
     
     # load the input JSON file
     with open(json_data_path, 'r') as f:
@@ -153,7 +202,7 @@ def create_support_sets_and_q(json_data_path, n_shot, k_way, support_set_num, s,
     data = input_dict['data']
     support_set_dict = data_prep.create_support_sets(data, n_shot, k_way, support_set_num)
     
-    SAVE_PATH = save_path + f'/{s}/{support_set_num}'
+    SAVE_PATH = save_path + f'/{s}' + f'/{k}' + f'/{support_set_num}'
     if os.path.exists(SAVE_PATH) == False:
         os.mkdir(SAVE_PATH)
         
@@ -169,7 +218,7 @@ def create_support_sets_and_q(json_data_path, n_shot, k_way, support_set_num, s,
     
     return support_set_dict, q_dict
 
-def create_unknown_q_sets(json_data_path, n_shot, k_way, support_set_num, s, query_c_num, query_c_size, save_path):
+def create_unknown_q_sets(json_data_path, n_shot, k_way, support_set_num, s, query_c_num, query_c_size, k, save_path):
     
     # load the input JSON file
     with open(json_data_path, 'r') as f:
@@ -178,15 +227,14 @@ def create_unknown_q_sets(json_data_path, n_shot, k_way, support_set_num, s, que
     # extract the data array from the input dictionary
     data = input_dict['data']
     
-    SAVE_PATH = save_path + f'/{s}/{support_set_num}'
+    SAVE_PATH = save_path + f'/{s}' + f'/{k}' + f'/{support_set_num}'
     if os.path.exists(SAVE_PATH) == False:
         os.mkdir(SAVE_PATH)
         
-    # write the output JSON file
     with open(SAVE_PATH + f'/{support_set_num}_{s}_suppotr_sets.json', 'r') as f:
         support_set_dict = json.load(f)
     
-    q_dict = data_prep.create_open_set_queries(data, SAVE_PATH + f'/{support_set_num}_{s}_suppotr_sets.json', query_c_num, query_c_size, v_o_t=s)
+    q_dict = data_prep.create_open_set_queries(data, SAVE_PATH + f'/{support_set_num}_{s}_suppotr_sets.json', query_c_num, query_c_size, k, v_o_t=s)
     
     # write the output JSON file
     with open(SAVE_PATH + f'/{len(q_dict)}_{s}_{query_c_num}C_{query_c_size}PC_q_openset.json', 'w') as f:
@@ -194,10 +242,10 @@ def create_unknown_q_sets(json_data_path, n_shot, k_way, support_set_num, s, que
     
     return support_set_dict, q_dict
 
-def create_task_sets(support_set_dict, q_dict, support_set_num, query_c_num, query_c_size, s, save_path, n_shot, openset=False):
+def create_task_sets(support_set_dict, q_dict, support_set_num, query_c_num, query_c_size, s, save_path, n_shot, k, openset=False):
     
     task_sets = []
-    SAVE_PATH = save_path + f'/{s}/{support_set_num}'
+    SAVE_PATH = save_path + f'/{s}' + f'/{k}' + f'/{support_set_num}'
     for i in range(support_set_num):
         for q_c in range(query_c_num):
             q_label = q_dict[i][q_c][0]
@@ -233,37 +281,49 @@ def create_task_sets(support_set_dict, q_dict, support_set_num, query_c_num, que
 
 def creat_f_s_sets(CODE_REPO_PATH, n_shot, k_way, query_c_num, query_c_size, train_support_set_num, test_support_set_num, val_support_set_num, val_support_set):
    
-    SAVE_PATH = f'/home/almogk/FSL_TL_E_C/data/FSL_SETS/{k_way}w_{n_shot}s_shot'
+    SAVE_PATH = f'/home/almogk/FSL_TL_E_C/data_kfold/FSL_SETS/{k_way}w_{n_shot}s_shot'
     if os.path.exists(SAVE_PATH) == False:
         os.mkdir(SAVE_PATH)
         os.mkdir(SAVE_PATH + '/train')
-        os.mkdir(SAVE_PATH + '/test')
-        os.mkdir(SAVE_PATH + '/val')
-
-    # create the support sets and query sets
-    train_support_set_dict, train_q_dict = create_support_sets_and_q(CODE_REPO_PATH + '/data/train_datafile/train_fsl_datafile/esc_fsl_train_data.json', 
-                        n_shot, k_way, train_support_set_num, 'train', query_c_num, query_c_size, SAVE_PATH)
-    
-    test_support_set_dict, test_q_dict = create_support_sets_and_q(CODE_REPO_PATH + '/data/test_datafile/esc_fsl_test_data.json', 
-                        n_shot, k_way, test_support_set_num, 'test', query_c_num, query_c_size, SAVE_PATH)
-    
-    if val_support_set == 0:
-        val_support_set_dict, val_q_dict = create_support_sets_and_q(CODE_REPO_PATH + '/data/val_datafile/esc_fsl_val_data.json', 
-                            n_shot, k_way, val_support_set_num, 'val', query_c_num, query_c_size, SAVE_PATH)
+        os.mkdir(SAVE_PATH + '/train' + '/0')
+        os.mkdir(SAVE_PATH + '/train' + '/1')
+        os.mkdir(SAVE_PATH + '/train' + '/2')
         
-        val_task_set = create_task_sets(val_support_set_dict, val_q_dict, 
-                                    val_support_set_num, query_c_num, query_c_size, 'val', SAVE_PATH, n_shot)
-    
-    # create the task sets
-    train_task_set = create_task_sets(train_support_set_dict, train_q_dict, 
-                                    train_support_set_num, query_c_num, query_c_size, 'train', SAVE_PATH, n_shot)
-    
-    test_task_set = create_task_sets(test_support_set_dict, test_q_dict, 
-                                    test_support_set_num, query_c_num, query_c_size, 'test', SAVE_PATH, n_shot)
+        os.mkdir(SAVE_PATH + '/test')
+        os.mkdir(SAVE_PATH + '/test' + '/0')
+        os.mkdir(SAVE_PATH + '/test' + '/1')
+        os.mkdir(SAVE_PATH + '/test' + '/2')
+        
+        os.mkdir(SAVE_PATH + '/val')
+        os.mkdir(SAVE_PATH + '/val' + '/0')
+        os.mkdir(SAVE_PATH + '/val' + '/1')
+        os.mkdir(SAVE_PATH + '/val' + '/2')
 
-def creat_unknown_f_s_sets(CODE_REPO_PATH, n_shot, k_way, query_c_num, query_c_size, test_support_set_num, data_path, text):
+    for k in range(3):
+        # create the support sets and query sets
+        train_support_set_dict, train_q_dict = create_support_sets_and_q(CODE_REPO_PATH + f'/data_kfold/train_datafile/train_fsl_datafile/esc_fsl_train_data_{k}.json', 
+                            n_shot, k_way, train_support_set_num, 'train', query_c_num, query_c_size, SAVE_PATH, k)
+        
+        test_support_set_dict, test_q_dict = create_support_sets_and_q(CODE_REPO_PATH + f'/data_kfold/test_datafile/esc_fsl_test_data_{k}.json', 
+                            n_shot, k_way, test_support_set_num, 'test', query_c_num, query_c_size, SAVE_PATH, k)
+        
+        if val_support_set == 0:
+            val_support_set_dict, val_q_dict = create_support_sets_and_q(CODE_REPO_PATH + f'/data_kfold/val_datafile/esc_fsl_val_data_{k}.json', 
+                                n_shot, k_way, val_support_set_num, 'val', query_c_num, query_c_size, SAVE_PATH, k)
+            
+            val_task_set = create_task_sets(val_support_set_dict, val_q_dict, 
+                                        val_support_set_num, query_c_num, query_c_size, 'val', SAVE_PATH, n_shot, k)
+        
+        # create the task sets
+        train_task_set = create_task_sets(train_support_set_dict, train_q_dict, 
+                                        train_support_set_num, query_c_num, query_c_size, 'train', SAVE_PATH, n_shot, k)
+        
+        test_task_set = create_task_sets(test_support_set_dict, test_q_dict, 
+                                        test_support_set_num, query_c_num, query_c_size, 'test', SAVE_PATH, n_shot, k)
+
+def creat_unknown_f_s_sets(CODE_REPO_PATH, n_shot, k_way, query_c_num, query_c_size, test_support_set_num, data_path, text, k):
    
-    SAVE_PATH = f'/home/almogk/FSL_TL_E_C/data/FSL_SETS/{k_way}w_{n_shot}s_shot'
+    SAVE_PATH = f'/home/almogk/FSL_TL_E_C/data_kfold/FSL_SETS/{k_way}w_{n_shot}s_shot'
     if os.path.exists(SAVE_PATH) == False:
         os.mkdir(SAVE_PATH)
         os.mkdir(SAVE_PATH + '/train')
@@ -272,10 +332,10 @@ def creat_unknown_f_s_sets(CODE_REPO_PATH, n_shot, k_way, query_c_num, query_c_s
 
     # create the query sets
     test_support_set_dict, test_q_dict = create_unknown_q_sets(CODE_REPO_PATH + data_path, 
-                        n_shot, k_way, test_support_set_num, text, query_c_num, query_c_size, SAVE_PATH)
+                        n_shot, k_way, test_support_set_num, text, query_c_num, query_c_size, k, SAVE_PATH)
     
     test_task_set = create_task_sets(test_support_set_dict, test_q_dict, 
-                                    test_support_set_num, query_c_num, query_c_size, text, SAVE_PATH, n_shot, True)
+                                    test_support_set_num, query_c_num, query_c_size, text, SAVE_PATH, n_shot, k, True)
     
 def merge_dictionaries(dict1, dict2):
    
@@ -285,10 +345,10 @@ def merge_dictionaries(dict1, dict2):
 
     return merged_dict
 
-def create_task_of_ss_test_sets(support_set_dict, support_set_num, s, save_path, n_shot):
+def create_task_of_ss_test_sets(support_set_dict, support_set_num, s, save_path, k, n_shot):
 
     task_sets = []
-    SAVE_PATH = save_path + f'/data/FSL_SETS/5w_1s_shot/{s}/{support_set_num}'
+    SAVE_PATH = save_path + f'/data_kfold/FSL_SETS/5w_1s_shot/{s}/{k}/{support_set_num}'
     # Iterate through all support sets
     for i in range(support_set_num):
         
@@ -308,12 +368,12 @@ def create_task_of_ss_test_sets(support_set_dict, support_set_num, s, save_path,
     
     return task_sets
 
-def make_task_sets_from_ss(support_set_path, k_way, n_shot, CODE_REPO_PATH, support_set_num, s):
+def make_task_sets_from_ss(support_set_path, k_way, n_shot, CODE_REPO_PATH, k, support_set_num, s):
     
     with open(support_set_path, 'r') as f:
         support_set_dic = json.load(f)
     
-    sets = create_task_of_ss_test_sets(support_set_dic, support_set_num[-1], s, CODE_REPO_PATH, n_shot)
+    sets = create_task_of_ss_test_sets(support_set_dic, support_set_num, s, CODE_REPO_PATH, k, n_shot)
 
 def make_perso_ss_param(cosine_distances, save_f):
     
