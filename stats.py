@@ -1,10 +1,8 @@
-# from sklearn.base import accuracy_score
-# import torch
-
+# ######################## Installations ###############################
 import numpy as np
 from scipy import stats
 from sklearn import metrics
-
+# #####################################################################
 
 def d_prime(auc):
     

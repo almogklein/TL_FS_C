@@ -1,3 +1,4 @@
+# ######################## Installations ###############################
 import os
 import torch
 import numpy as np
@@ -10,7 +11,9 @@ from scipy.interpolate import interp1d
 from scipy.spatial.distance import mahalanobis
 import matplotlib.gridspec as gridspec
 from sklearn.metrics.pairwise import cosine_similarity
-from sklearn.metrics import accuracy_score, confusion_matrix, classification_report, precision_score, roc_curve, balanced_accuracy_score #, average_precision_score, pairwise_distances  
+from sklearn.metrics import accuracy_score, confusion_matrix, classification_report, roc_curve, balanced_accuracy_score
+# #####################################################################
+
 
 def calculate_statistics(cosine_distances, pairs, embeddings, save_file_path):
     

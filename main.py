@@ -1,16 +1,9 @@
 # ######################## Installations ###############################
-import itertools
 import os
 import json
-import random
 import time
-from sklearn.metrics import balanced_accuracy_score, classification_report, accuracy_score
-from sklearn.ensemble import RandomForestClassifier, GradientBoostingClassifier
-from sklearn.svm import SVC
-import xgboost as xgb
-from tqdm import tqdm
-import joblib
 import torch
+import joblib
 import pickle
 import datetime
 import argparse
@@ -21,15 +14,19 @@ import torch.optim
 import stats as st
 import numpy as np
 import pandas as pd
+import xgboost as xgb
+from tqdm import tqdm
 import torch.nn as nn
-from scipy import stats
 import cosin_calc as cc
 import infering as infer
+from sklearn.svm import SVC
 import ast_models as ast_mo
 from util import AverageMeter
 from torch.cuda.amp import autocast, GradScaler
 from sklearn.model_selection import ParameterGrid
 from sklearn.ensemble import RandomForestClassifier
+from sklearn.metrics import balanced_accuracy_score, accuracy_score
+from sklearn.ensemble import RandomForestClassifier, GradientBoostingClassifier
 # #####################################################################
 
 
@@ -931,9 +928,6 @@ def main():
                     'sneezing', 'thunderstorm', 'crow', 'glass_breaking', 'church_bells', 'cow', 'dog', 'airplane', 'engine', 'crackling_fire', 'clock_alarm', 
                     'coughing', 'hen', 'breathing']
     
-    class_lookup_10 = {'00': 0, '03': 1, '09': 2, '19': 3, '21': 4, '36': 5, '39': 6, '44': 7, '46': 8, '47': 9}
-    class_lookup_5 = {'06': 0, '12': 1, '23': 2, '24': 3, '37': 4}
-    
     class_lookup_35 = {'1': 0, '2': 1, '4': 2, '5': 3, '7': 4, '8': 5, '10': 6, '11': 7, '13': 8, 
                     '14': 9, '15': 10, '16': 11, '17': 12, '18': 13, '20': 14, '22': 15,
                     '25': 16, '26': 17, '27': 18, '28': 19, '29': 20, '30': 21, '31': 22,
@@ -1228,10 +1222,9 @@ def main():
                 acc_list_5_mss, acc_list_5_mad, acc_list_4_mss, acc_list_4_mad, acc_list_10_mss, acc_list_10_mass_ = [[] for _ in range(6)]
                 err_list_5_mss, err_list_5_mad, err_list_4_mss, err_list_4_mad, err_list_10_mss, err_list_10_mass_ = [[] for _ in range(6)]
                 all_tresh_ = []
-                # ss_true_labels_val = [pair[2][-2:] if pair[2][-2:].isdigit() else pair[2] for pair in pairs_q]
                 binary_ground_truth_val = [pair[0] for pair in pairs_q]
                 
-                for index_const, (sig, alf) in enumerate(zip(tresh_sig_const, tresh_alfa_const)):
+                for _, (sig, alf) in enumerate(zip(tresh_sig_const, tresh_alfa_const)):
                     ss_tresholds_all, ss_tresholds_all_0, ss_tresholds_no_q_max_sig_std, ss_tresholds_no_q_mean_sig_std, ss_tresholds_all_max_alfa_diff, ss_tresholds_all_0_max_alfa_diff = [[] for _ in range(6)]
                     for i in range(6):
                         
@@ -1337,8 +1330,8 @@ def main():
                     bc_p_0_mss, accuracies_b_test4_0_mss, reports_b_0_mss, conf_matrices_b_mss__, eer_test4_0_mss, BA_test4_0_mss = cc.evaluate_classification_per_ss_B(cosine_distances_test, test_pairs_q, ss_tresholds_all_0_test, test_support_set_num[-1], k_way[0], True, query_c_num[0], query_c_size[0], binary_ground_truth_test)
                     bc_p_0_MAD, accuracies_b_test4_0_mad, reports_b_0_mad, conf_matrices_b_mss____, eer_test4_0_mad, BA_test4_0_mad = cc.evaluate_classification_per_ss_B(cosine_distances_test, test_pairs_q, ss_tresholds_all_0_max_alfa_diff_test, test_support_set_num[-1], k_way[0], True, query_c_num[0], query_c_size[0], binary_ground_truth_test)
                     
-                    bc_p_ss, accuracies_b_test10, reports_b_ss, conf_matrices_b_mss__________________, eer_test10_ss, BA_test10_ss = cc.evaluate_classification_per_ss_B(cosine_distances_test, test_pairs_q, ss_tresholds_no_q_mean_sig_std_test, test_support_set_num[-1], k_way[0], True, query_c_num[0], query_c_size[0], binary_ground_truth_test)
-                    bc_p_0_ss, accuracies_b_test10_max, reports_b_ss_max_, conf_matrices_b_mss_____________________________, eer_test10_ss_, BA_test10_ss_ = cc.evaluate_classification_per_ss_B(cosine_distances_test, test_pairs_q, ss_tresholds_no_q_max_sig_std_test, test_support_set_num[-1], k_way[0], True, query_c_num[0], query_c_size[0], binary_ground_truth_test)
+                    bc_p_ss, accuracies_b_test10, reports_b_ss, conf_matrices_b_mss____, eer_test10_ss, BA_test10_ss = cc.evaluate_classification_per_ss_B(cosine_distances_test, test_pairs_q, ss_tresholds_no_q_mean_sig_std_test, test_support_set_num[-1], k_way[0], True, query_c_num[0], query_c_size[0], binary_ground_truth_test)
+                    bc_p_0_ss, accuracies_b_test10_max, reports_b_ss_max_, conf_matrices_b_mss______, eer_test10_ss_, BA_test10_ss_ = cc.evaluate_classification_per_ss_B(cosine_distances_test, test_pairs_q, ss_tresholds_no_q_max_sig_std_test, test_support_set_num[-1], k_way[0], True, query_c_num[0], query_c_size[0], binary_ground_truth_test)
                     
                     score_list_kfold.append([BA_test5_mss, BA_test5_mad, BA_test4_0_mss, BA_test4_0_mad, BA_test10_ss, BA_test10_ss_])
                     sig_list_kfold.append(sig_alfa)
@@ -1381,13 +1374,8 @@ def main():
         tresh_kfold_list = []
 
         scor_kfold_list_5_A = []
-        scor_kfold_list_5_B = []
-    
         scor_kfold_list_4_A = []
-        scor_kfold_list_4_B = []
-        
         scor_kfold_list_10_A = []
-        scor_kfold_list_10_B = []
         
         for k in range(3):
                 
@@ -1413,11 +1401,11 @@ def main():
                 test_cosine_distances_openset = cc.calculate_cosine_distances(embeddings_full, test_pairs_openset)
                 u.write_json(save_file_path + f'/test/{k}/15000/cosin_openset_test.json', test_cosine_distances_openset)
                 
-                # cosine_distances_no_q = cc.calculate_cosine_distances(embeddings_full, pairs_no_q)
-                # u.write_json(save_file_path + f'/val/{k}/120/cos_sim_val_no_q.json', cosine_distances_no_q)
+                cosine_distances_no_q = cc.calculate_cosine_distances(embeddings_full, pairs_no_q)
+                u.write_json(save_file_path + f'/val/{k}/120/cos_sim_val_no_q.json', cosine_distances_no_q)
                 
-                # cosine_distances_test_no_q = cc.calculate_cosine_distances(embeddings_full, test_pairs_no_q)
-                # u.write_json(save_file_path + f'/test/{k}/15000/cos_sim_tesr_no_q.json', cosine_distances_test_no_q)
+                cosine_distances_test_no_q = cc.calculate_cosine_distances(embeddings_full, test_pairs_no_q)
+                u.write_json(save_file_path + f'/test/{k}/15000/cos_sim_tesr_no_q.json', cosine_distances_test_no_q)
             
             save_file1 = save_file_path + f'/val/{k}/120/ss_personal_param_q_openset_val.json'
             save_file2 = save_file_path + f'/val/{k}/120/ss_personal_param_no_q_val.json'
@@ -1427,10 +1415,10 @@ def main():
             create_ = False
             if create_:
                 perso_ss_param_q_val = u.make_perso_ss_param(cosine_distances_openset, save_file1)                
-                # perso_ss_param_no_q_val = u.make_perso_ss_param_no_q(cosine_distances_no_q, save_file2)
+                perso_ss_param_no_q_val = u.make_perso_ss_param_no_q(cosine_distances_no_q, save_file2)
                 
                 perso_ss_param_q_test = u.make_perso_ss_param(test_cosine_distances_openset, save_file3)                
-                # perso_ss_param_no_q_test = u.make_perso_ss_param_no_q(cosine_distances_test_no_q, save_file4) 
+                perso_ss_param_no_q_test = u.make_perso_ss_param_no_q(cosine_distances_test_no_q, save_file4) 
             else:            
                 perso_ss_param_q_val = u.read_json(save_file1)        
                 perso_ss_param_no_q_val = u.read_json(save_file2)            
@@ -1460,7 +1448,7 @@ def main():
                 scor_kfold_list.append(mc_bala_acc)
                 tresh_kfold_list.append(tresh_fin)
                 
-                # cc.plot_confusion_matrices(conf_matrices_m, save_file_path+'/test', class_labels, k, single_plot=True)
+                cc.plot_confusion_matrices(conf_matrices_m, save_file_path+'/test', class_labels, k, single_plot=True)
 
                 scor_kfold_array = np.array(scor_kfold_list)
                 bala_acc_average_list = np.mean(scor_kfold_array, axis=0)
@@ -1695,7 +1683,6 @@ def main():
                     # Test the Siamese network using the infer function
                     start_time = time.time()
                     test_metrics = sieamis_ast_infer(audio_model, test_loader, classifier)
-                    # [x_d, y_d, cla_pred]
                     classi_x, classi_y, classi_pred = test_metrics[5]
                     
                     cla_bala_acc = balanced_accuracy_score(classi_y, classi_pred)

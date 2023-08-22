@@ -1,9 +1,4 @@
-# import math
-# import torch
-# import random
-# import pickle
-# import torch.nn as nn
-
+# ######################## Installations ###############################
 import os
 import json
 import random
@@ -12,8 +7,10 @@ import data_prep
 import numpy as np
 from scipy import stats
 from pathlib import Path
+from collections import Counter 
 from matplotlib import pyplot as plt
-from collections import Counter #, namedtuple
+# #####################################################################
+
 
 class AverageMeter(object):
     """Computes and stores the average and current value"""

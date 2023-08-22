@@ -1,19 +1,14 @@
-# -*- coding: utf-8 -*-
-# @Time    : 6/10/21 5:04 PM
-# @Author  : Yuan Gong
-# @Affiliation  : Massachusetts Institute of Technology
-# @Email   : yuangong@mit.edu
-# @File    : ast_models.py
-
-import numpy as np
+# ######################## Installations ###############################
 import torch
 import os, wget
 import torch, timm
+import numpy as np
 import torch.nn as nn
 import torch.nn.functional as F
 from torch.cuda.amp import autocast
-from timm.models.layers import to_2tuple, trunc_normal_
 from scipy.spatial.distance import mahalanobis
+from timm.models.layers import to_2tuple, trunc_normal_
+# #####################################################################
 
 # override the timm package to relax the input shape constraint.
 class PatchEmbed(nn.Module):
